@@ -24,10 +24,12 @@ LOCATION_FILTER = "United States"  # Set to "" to disable location filtering
 
 # ── Years-of-experience filter ────────────────────────────────────────────────
 YOUR_YEARS_EXPERIENCE = 3          # your actual experience level
-# Skip jobs whose minimum YOE requirement exceeds this threshold.
-# Set higher than YOUR_YEARS_EXPERIENCE to include some stretch roles.
-# e.g. 3 yrs experience → allow up to 5 yrs required (2-yr stretch buffer)
-YOE_MAX_FILTER = 5                 # set to 0 to disable YOE filtering
+
+# Accepted experience range: 0 – 5 years required
+# Jobs requiring more than YOE_MAX_FILTER years are skipped entirely.
+# Set YOE_MAX_FILTER = 0 to disable the filter and collect all jobs.
+YOE_MIN_FILTER = 0                 # no lower bound (include entry-level and above)
+YOE_MAX_FILTER = 5                 # skip jobs requiring more than 5 years
 
 # ── ATS quality gates ─────────────────────────────────────────────────────────
 ATS_SCORE_MIN = 89        # below this → retry with missing keyword injection
