@@ -50,7 +50,7 @@ from pipeline.dedup import (
     init_db, is_duplicate, insert_job,
     get_unprocessed_jobs, mark_processed, get_todays_processed_jobs,
 )
-from pipeline.jd_extractor import extract_jd_text
+from pipeline.jd_extractor import extract_jd_text, extract_min_years
 from pipeline.tailor_resume import tailor_resume
 from pipeline.ats_scorer import score_resume
 from sources.indeed_rss import fetch_indeed_jobs
@@ -61,7 +61,7 @@ from sources.email_parser import watch_linkedin_alerts
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
-from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR
+from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
@@ -138,6 +138,16 @@ def run_collection_cycle() -> int:
             except Exception as e:
                 logger.warning("JD extraction failed for %s: %s", job["url"], e)
                 job["jd_text"] = ""
+
+        # ── Years-of-experience filter ────────────────────────────────────
+        if YOE_MAX_FILTER > 0 and job.get("jd_text"):
+            min_yoe = extract_min_years(job["jd_text"])
+            if min_yoe is not None and min_yoe > YOE_MAX_FILTER:
+                logger.info(
+                    "Skipping %s at %s — requires %d+ yrs (limit: %d)",
+                    title, company, min_yoe, YOE_MAX_FILTER,
+                )
+                continue
 
         job_id = insert_job(job, DB_PATH)
         logger.info("New job #%d: %s at %s (source: %s)", job_id, title, company, job.get("source"))

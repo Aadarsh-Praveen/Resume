@@ -3,6 +3,9 @@ Job Description text extractor.
 
 Fetches the full HTML from a job posting URL and extracts clean plain text.
 Handles common ATS URL patterns: Greenhouse, Lever, Ashby, BambooHR, Indeed.
+
+Also provides `extract_min_years(jd_text)` which parses years-of-experience
+requirements from sections like "Minimum Requirements" or "Qualifications".
 """
 
 import re
@@ -117,6 +120,102 @@ _SELECTORS = {
     "linkedin":    ".description__text",
     "generic":     "main",
 }
+
+
+# ── Years-of-experience extraction ───────────────────────────────────────────
+
+# Section headers that indicate a requirements / qualifications block
+_REQ_SECTION_RE = re.compile(
+    r"(?:minimum\s+requirements?|required?\s+qualifications?|basic\s+qualifications?"
+    r"|what\s+you(?:'ll)?\s+(?:need|bring|have)"
+    r"|qualifications?|requirements?"
+    r"|you\s+(?:must|should)\s+have"
+    r"|experience\s+(?:required|needed|we\s+require))",
+    re.IGNORECASE,
+)
+
+# All YOE patterns — each group (or first group for ranges) gives the *lower* bound
+_YOE_PATTERNS = [
+    re.compile(r"(\d+)\s*\+\s*years?",                           re.IGNORECASE),  # 5+ years
+    re.compile(r"(\d+)\s*[-–—]\s*(\d+)\s*years?",               re.IGNORECASE),  # 2-5 years
+    re.compile(r"at\s+least\s+(\d+)\s*years?",                   re.IGNORECASE),  # at least 3 years
+    re.compile(r"minimum\s+(?:of\s+)?(\d+)\s*years?",            re.IGNORECASE),  # minimum 3 years
+    re.compile(r"(\d+)\s+or\s+more\s+years?",                    re.IGNORECASE),  # 3 or more years
+    re.compile(r"(\d+)\s*years?\s+(?:of\s+)?(?:relevant\s+)?experience", re.IGNORECASE),  # 3 years experience
+]
+
+# Section headers that signal the *end* of a requirements block
+_NEXT_SECTION_RE = re.compile(
+    r"^(?:responsibilities|what\s+you(?:'ll)?\s+do|about\s+(?:us|the\s+role|you)"
+    r"|benefits?|perks?|compensation|salary|about\s+this\s+role)",
+    re.IGNORECASE,
+)
+
+
+def _years_from_text(text: str) -> list[int]:
+    """Return all YOE lower-bounds found in *text* (duplicates allowed)."""
+    found: list[int] = []
+    for pat in _YOE_PATTERNS:
+        for m in pat.finditer(text):
+            groups = [int(g) for g in m.groups() if g is not None]
+            if groups:
+                found.append(min(groups))   # ranges like "2-5 yrs" → 2
+    return found
+
+
+def extract_min_years(jd_text: str) -> Optional[int]:
+    """
+    Parse the minimum years-of-experience requirement from a JD.
+
+    Searches inside recognised requirement sections first
+    (Minimum Requirements, Qualifications, etc.), then falls back to
+    scanning the whole text.
+
+    Returns:
+        Minimum years required as int, or None if no pattern is found.
+
+    Examples:
+        "3+ years"    → 3
+        "2-5 years"   → 2   (lower bound of the range)
+        "5+ years"    → 5
+        no pattern    → None
+    """
+    if not jd_text:
+        return None
+
+    lines = jd_text.splitlines()
+    n = lines.__len__()
+
+    # Collect text windows that follow a requirements-style section header.
+    req_windows: list[str] = []
+    i = 0
+    while i < n:
+        stripped = lines[i].strip()
+        # A section header: matches the regex and is a short line (title, not a bullet)
+        if _REQ_SECTION_RE.search(stripped) and len(stripped) < 80:
+            # Gather lines until the next major section or 25 lines, whichever first
+            window_lines = [stripped]
+            j = i + 1
+            while j < n and j < i + 25:
+                next_line = lines[j].strip()
+                if _NEXT_SECTION_RE.match(next_line) and len(next_line) < 60:
+                    break
+                window_lines.append(next_line)
+                j += 1
+            req_windows.append("\n".join(window_lines))
+        i += 1
+
+    # Search requirement sections first
+    if req_windows:
+        req_years: list[int] = []
+        for window in req_windows:
+            req_years.extend(_years_from_text(window))
+        if req_years:
+            return min(req_years)
+
+    # Fallback: scan whole JD (less precise but better than nothing)
+    all_years = _years_from_text(jd_text)
+    return min(all_years) if all_years else None
 
 
 def extract_jd_text(url: str) -> str:
