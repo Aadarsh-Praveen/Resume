@@ -52,3 +52,10 @@ env/
 .vscode/
 .idea/
 *.swp
+
+# OAuth credentials (VERY IMPORTANT)
+credentials.json
+
+# Optional: other sensitive configs
+secrets*.json
+config*.json
