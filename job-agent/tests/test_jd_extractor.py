@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pipeline.jd_extractor import extract_jd_text, _detect_source, _clean_text
+from pipeline.jd_extractor import extract_jd_text, _detect_source, _clean_text, extract_min_years
 
 
 SAMPLE_GREENHOUSE_HTML = """
@@ -134,6 +134,60 @@ class TestExtractJdText(unittest.TestCase):
         ]
         with self.assertRaises(req_lib.RequestException):
             extract_jd_text("https://example.com/job/fail")
+
+
+class TestExtractMinYears(unittest.TestCase):
+
+    def test_plus_notation(self):
+        jd = "Minimum Requirements:\n- 5+ years of experience in machine learning\n- Python proficiency"
+        self.assertEqual(extract_min_years(jd), 5)
+
+    def test_range_returns_lower_bound(self):
+        jd = "Required Qualifications:\n- 2-5 years of relevant experience\n- SQL knowledge"
+        self.assertEqual(extract_min_years(jd), 2)
+
+    def test_at_least_pattern(self):
+        jd = "Requirements:\n- At least 3 years of experience in data science\n- Strong Python skills"
+        self.assertEqual(extract_min_years(jd), 3)
+
+    def test_minimum_of_pattern(self):
+        jd = "Basic Qualifications:\n- Minimum of 4 years experience with ML frameworks\n- PyTorch"
+        self.assertEqual(extract_min_years(jd), 4)
+
+    def test_or_more_pattern(self):
+        jd = "Qualifications:\n- 3 or more years of industry experience\n- Deep learning"
+        self.assertEqual(extract_min_years(jd), 3)
+
+    def test_years_experience_pattern(self):
+        jd = "Requirements:\n- 6 years of experience in applied ML\n- Research background"
+        self.assertEqual(extract_min_years(jd), 6)
+
+    def test_returns_minimum_when_multiple_found(self):
+        # Multiple requirements sections — returns the smallest lower bound
+        jd = (
+            "Minimum Requirements:\n- 3+ years of experience\n\n"
+            "Preferred Qualifications:\n- 7+ years of experience preferred"
+        )
+        self.assertEqual(extract_min_years(jd), 3)
+
+    def test_no_yoe_pattern_returns_none(self):
+        jd = "We are looking for a talented data scientist to join our team.\nPython and SQL required."
+        self.assertIsNone(extract_min_years(jd))
+
+    def test_empty_string_returns_none(self):
+        self.assertIsNone(extract_min_years(""))
+
+    def test_none_returns_none(self):
+        self.assertIsNone(extract_min_years(None))
+
+    def test_fallback_to_full_text_when_no_section(self):
+        # No section header — falls back to whole-text scan
+        jd = "We need someone with 4+ years of data science experience and strong SQL skills."
+        self.assertEqual(extract_min_years(jd), 4)
+
+    def test_dash_range_with_em_dash(self):
+        jd = "Requirements:\n- 3–5 years of relevant experience"
+        self.assertEqual(extract_min_years(jd), 3)
 
 
 if __name__ == "__main__":
