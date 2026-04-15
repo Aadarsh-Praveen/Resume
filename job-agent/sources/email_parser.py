@@ -89,24 +89,100 @@ def _get_email_body(service, message_id: str) -> str:
     return extract_html(payload) or ""
 
 
+def _extract_title_from_card(link) -> str:
+    """
+    Extract job title from a LinkedIn email job link.
+
+    Tries in order:
+      1. Direct link text (most common — LinkedIn wraps title in the <a>)
+      2. aria-label attribute on the link ("Senior DS at Stripe" → "Senior DS")
+      3. Nearest heading tag (h1–h4, strong) inside the card container
+      4. Parent element full text (truncated)
+    """
+    title = link.get_text(strip=True)
+    if title and len(title) >= 5:
+        return title
+
+    aria = link.get("aria-label", "").strip()
+    if aria and len(aria) >= 5:
+        # "Senior Data Scientist at Stripe" → take part before " at "
+        return aria.split(" at ")[0].strip()
+
+    parent = link.find_parent(["td", "div", "li", "article"])
+    if parent:
+        for tag in ("h1", "h2", "h3", "h4", "strong"):
+            heading = parent.find(tag)
+            if heading:
+                text = heading.get_text(strip=True)
+                if text and len(text) >= 5:
+                    return text
+        return parent.get_text(separator=" ", strip=True)[:100]
+
+    return ""
+
+
+def _extract_company_location_from_card(link, title: str) -> tuple:
+    """
+    Extract company name and location from the job card container.
+
+    Collects all leaf text nodes in the card, removes the title, then
+    assigns: first remaining text → company, first location-like text → location.
+    """
+    company = ""
+    location = ""
+
+    parent_cell = link.find_parent(["td", "tr", "div"])
+    if not parent_cell:
+        return company, location
+
+    spans = parent_cell.find_all(["span", "p", "td"])
+    text_parts = []
+    for s in spans:
+        t = s.get_text(strip=True)
+        # Skip empty, single-char, URL-like, or digit-only strings
+        if t and t != title and len(t) > 2 and not t.startswith("http") and not t.isdigit():
+            text_parts.append(t)
+
+    if text_parts:
+        company = text_parts[0][:80]
+
+    # Find a location-like string: "City, ST", known US city/state, or "Remote"
+    location_re = re.compile(
+        r"\b(remote|united states|new york|san francisco|seattle|austin|"
+        r"chicago|boston|los angeles|denver|atlanta|washington|redmond|"
+        r"menlo park|mountain view|santa clara|cambridge)\b"
+        r"|[A-Z][a-z]+,\s*[A-Z]{2}",
+        re.IGNORECASE,
+    )
+    for part in text_parts[1:]:
+        if location_re.search(part):
+            location = part[:80]
+            break
+    if not location and len(text_parts) > 1:
+        location = text_parts[1][:80]
+
+    return company, location
+
+
 def _parse_linkedin_alert_html(html: str) -> list[dict]:
     """
     Parse a LinkedIn job alert email HTML and extract job cards.
 
+    Uses multiple fallback strategies to handle LinkedIn's A/B-tested email
+    layouts (desktop, mobile, region-specific variants).
+
     LinkedIn alert emails contain structured job cards with:
-    - Job title (in <a> tag)
-    - Company name (in a sibling element)
-    - Location
-    - Apply URL
+    - Job title (in <a> tag or nearest heading)
+    - Company name (sibling span/td after the title link)
+    - Location (sibling span/td after company)
+    - Apply URL (<a href="...linkedin.com/jobs/view/...">)
     """
     soup = BeautifulSoup(html, "lxml")
     jobs = []
+    seen_urls: set = set()
 
-    # LinkedIn job cards are typically in <table> cells with job-specific class names
-    # Strategy: find all links that look like LinkedIn job URLs
+    # Find every anchor that points to a LinkedIn job listing
     job_links = soup.find_all("a", href=re.compile(r"linkedin\.com/jobs/view/\d+"))
-
-    seen_urls = set()
 
     for link in job_links:
         job_url = link.get("href", "").split("?")[0]  # strip tracking params
@@ -114,27 +190,8 @@ def _parse_linkedin_alert_html(html: str) -> list[dict]:
             continue
         seen_urls.add(job_url)
 
-        # Job title is usually the link text or nearest heading
-        title = link.get_text(strip=True)
-        if not title or len(title) < 3:
-            # Try parent element text
-            parent = link.find_parent(["td", "div", "li"])
-            if parent:
-                title = parent.get_text(separator=" ", strip=True)[:100]
-
-        # Company and location — usually in sibling/parent elements
-        company = ""
-        location = ""
-        parent_cell = link.find_parent(["td", "tr", "div"])
-        if parent_cell:
-            spans = parent_cell.find_all(["span", "p", "td"])
-            text_parts = [s.get_text(strip=True) for s in spans if s.get_text(strip=True)]
-            # Heuristic: 2nd non-title text is company, 3rd is location
-            non_title = [t for t in text_parts if t != title and len(t) > 2]
-            if non_title:
-                company = non_title[0][:80]
-            if len(non_title) > 1:
-                location = non_title[1][:80]
+        title = _extract_title_from_card(link)
+        company, location = _extract_company_location_from_card(link, title)
 
         if not title or not job_url:
             continue

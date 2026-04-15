@@ -58,6 +58,9 @@ from sources.greenhouse_api import fetch_greenhouse_jobs
 from sources.lever_api import fetch_lever_jobs
 from sources.ashby_api import fetch_ashby_jobs
 from sources.email_parser import watch_linkedin_alerts
+from sources.linkedin_jobs import fetch_linkedin_jobs
+from sources.workday_api import fetch_workday_jobs
+from sources.custom_careers import fetch_custom_career_jobs
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
@@ -117,6 +120,27 @@ def run_collection_cycle() -> int:
         all_new_jobs.extend(jobs)
     except Exception as e:
         logger.warning("Gmail/LinkedIn alerts failed (check credentials): %s", e)
+
+    # Source 6: LinkedIn direct search (guest API — no login required)
+    try:
+        jobs = fetch_linkedin_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("LinkedIn direct search failed: %s", e)
+
+    # Source 7: Workday JSON API (NVIDIA, Tesla, Apple, Salesforce, AMD)
+    try:
+        jobs = fetch_workday_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("Workday API failed: %s", e)
+
+    # Source 8: Custom career pages (Google, Meta, Microsoft, Amazon)
+    try:
+        jobs = fetch_custom_career_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("Custom career pages failed: %s", e)
 
     # Deduplicate and insert
     inserted = 0

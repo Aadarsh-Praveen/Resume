@@ -50,6 +50,13 @@ INDEED_QUERIES = [
 ]
 INDEED_MAX_RESULTS = 25   # entries per RSS feed
 
+# ── LinkedIn direct search queries ────────────────────────────────────────────
+LINKEDIN_QUERIES = [
+    {"keywords": "data scientist", "location": "United States"},
+    {"keywords": "machine learning engineer", "location": "United States"},
+    {"keywords": "AI engineer", "location": "United States"},
+]
+
 # ── Target companies for Greenhouse / Lever / Ashby APIs ─────────────────────
 # Format: { "slug": {"ats": "greenhouse|lever|ashby|bamboohr", "name": "Display Name"} }
 GREENHOUSE_COMPANIES = {
@@ -85,24 +92,20 @@ BAMBOOHR_COMPANIES = {
     "bamboohr": {"domain": "bamboohr.bamboohr.com", "name": "BambooHR"},
 }
 
-# ── Workday target companies (Phase 5 — Playwright scraping) ──────────────────
-WORKDAY_COMPANIES = [
-    {
-        "name": "Louis Vuitton",
-        "url": "https://careers.louisvuitton.com/eng",
-        "keywords": ["data", "scientist", "analyst", "ml", "machine learning"],
-    },
-    {
-        "name": "Google",
-        "url": "https://careers.google.com/jobs/results/?q=data+scientist",
-        "keywords": ["data scientist", "ml engineer"],
-    },
-    {
-        "name": "Meta",
-        "url": "https://www.metacareers.com/jobs?q=data+scientist",
-        "keywords": ["data scientist", "ml"],
-    },
-]
+# ── Workday target companies (JSON API — no browser required) ─────────────────
+# Format: { "tenant": {"board": str, "name": str, "search": str} }
+WORKDAY_API_COMPANIES = {
+    "nvidia":     {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA",      "search": "data scientist"},
+    "tesla":      {"board": "TeslaCareerSite",          "name": "Tesla",       "search": "data scientist"},
+    "apple":      {"board": "Apple",                    "name": "Apple",       "search": "machine learning"},
+    "salesforce": {"board": "External_Career_Site",     "name": "Salesforce",  "search": "data scientist"},
+    "amd":        {"board": "AMD",                      "name": "AMD",         "search": "machine learning"},
+}
+
+# ── Custom career page companies (own APIs — not Workday) ─────────────────────
+# These companies have custom public JSON / GraphQL endpoints.
+# Valid keys: "google", "meta", "microsoft", "amazon"
+CUSTOM_CAREER_COMPANIES = ["google", "meta", "microsoft", "amazon"]
 
 # ── Keyword filters (jobs must match at least one) ────────────────────────────
 ROLE_KEYWORDS = [
