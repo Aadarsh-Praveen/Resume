@@ -142,9 +142,12 @@ class TestExtractMinYears(unittest.TestCase):
         jd = "Minimum Requirements:\n- 5+ years of experience in machine learning\n- Python proficiency"
         self.assertEqual(extract_min_years(jd), 5)
 
-    def test_range_returns_lower_bound(self):
+    def test_range_returns_upper_bound(self):
+        # For a range like "2-5 years", the upper bound (5) is what we compare
+        # against YOE_MAX_FILTER. A 3-year person fits inside 2-5, and 5 > 5 = False
+        # so the job is NOT filtered — correct behaviour.
         jd = "Required Qualifications:\n- 2-5 years of relevant experience\n- SQL knowledge"
-        self.assertEqual(extract_min_years(jd), 2)
+        self.assertEqual(extract_min_years(jd), 5)
 
     def test_at_least_pattern(self):
         jd = "Requirements:\n- At least 3 years of experience in data science\n- Strong Python skills"
@@ -162,13 +165,14 @@ class TestExtractMinYears(unittest.TestCase):
         jd = "Requirements:\n- 6 years of experience in applied ML\n- Research background"
         self.assertEqual(extract_min_years(jd), 6)
 
-    def test_returns_minimum_when_multiple_found(self):
-        # Multiple requirements sections — returns the smallest lower bound
+    def test_returns_max_when_multiple_found_in_requirements(self):
+        # Multiple YOE values in requirements section — returns the highest (hardest gate)
+        # e.g. "10+ years ML, 5+ years management" should NOT pass a 5yr filter
         jd = (
-            "Minimum Requirements:\n- 3+ years of experience\n\n"
-            "Preferred Qualifications:\n- 7+ years of experience preferred"
+            "Minimum Requirements:\n- 10+ years of experience in ML\n"
+            "- 5+ years managing a team of managers"
         )
-        self.assertEqual(extract_min_years(jd), 3)
+        self.assertEqual(extract_min_years(jd), 10)
 
     def test_no_yoe_pattern_returns_none(self):
         jd = "We are looking for a talented data scientist to join our team.\nPython and SQL required."
@@ -187,7 +191,7 @@ class TestExtractMinYears(unittest.TestCase):
 
     def test_dash_range_with_em_dash(self):
         jd = "Requirements:\n- 3–5 years of relevant experience"
-        self.assertEqual(extract_min_years(jd), 3)
+        self.assertEqual(extract_min_years(jd), 5)
 
 
 if __name__ == "__main__":

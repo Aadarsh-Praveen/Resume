@@ -77,12 +77,15 @@ def _build_fix_compile_prompt(broken_tex: str, error_log: str) -> str:
 
 def _build_trim_prompt(long_tex: str, page_count: int) -> str:
     return (
-        f"This resume compiled to {page_count} pages but must be exactly 1 page.\n\n"
-        f"Trim it to fit on exactly 1 page. Rules:\n"
-        f"- Do NOT remove any job roles, companies, or dates\n"
-        f"- Remove the least important bullet points from each role\n"
-        f"- Reduce spacing if needed (\\vspace, \\itemsep)\n"
-        f"- Return the complete corrected .tex file and nothing else.\n\n"
+        f"This resume compiled to {page_count} pages. It MUST fit on exactly 1 page.\n\n"
+        f"Apply ALL of these cuts in order until it fits:\n"
+        f"1. Enforce hard bullet limits: most recent role 4 bullets, others 3 bullets each\n"
+        f"2. Enforce 25-word maximum per bullet — split or cut any bullet that exceeds this\n"
+        f"3. Reduce project count to top 2 most relevant, 2 bullets each\n"
+        f"4. Shrink summary to exactly 3 sentences\n"
+        f"5. Tighten LaTeX spacing: reduce \\vspace and \\itemsep values by 20–30\\%\n\n"
+        f"Do NOT remove any job roles, companies, or dates.\n"
+        f"Return the complete corrected .tex file and nothing else.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
     )
 

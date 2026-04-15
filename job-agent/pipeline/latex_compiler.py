@@ -121,14 +121,19 @@ def render_preview(pdf_path: str, dpi: int = 150) -> str:
     """
     Render the first page of a PDF as a JPEG using pdftoppm.
 
+    The image is written to the system temp directory (not alongside the PDF)
+    so only .pdf files accumulate in the resumes/ folder.
+    Callers are responsible for deleting the file after use.
+
     Args:
         pdf_path: Absolute path to the PDF.
         dpi:      Resolution for the preview image (default 150).
 
     Returns:
-        Path to the generated JPEG file, or empty string on failure.
+        Path to the generated JPEG file in /tmp, or empty string on failure.
     """
-    output_prefix = pdf_path.replace(".pdf", "_preview")
+    stem = Path(pdf_path).stem
+    output_prefix = os.path.join(tempfile.gettempdir(), f"{stem}_preview")
     try:
         result = subprocess.run(
             [

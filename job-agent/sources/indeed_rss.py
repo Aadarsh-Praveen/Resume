@@ -154,6 +154,12 @@ def fetch_indeed_jobs(queries: Optional[list] = None) -> list[dict]:
         logger.info("Polling Indeed RSS: %s", url)
         try:
             resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 403:
+                logger.warning(
+                    "Indeed RSS blocked (403) for query '%s' — "
+                    "Indeed actively rate-limits RSS scrapers. Skipping.", q
+                )
+                continue
             resp.raise_for_status()
             entries = _parse_rss_xml(resp.text)
             logger.info("Got %d entries from Indeed for query '%s'", len(entries), q)
@@ -164,8 +170,10 @@ def fetch_indeed_jobs(queries: Optional[list] = None) -> list[dict]:
                     seen_urls.add(job["url"])
                     jobs.append(job)
 
+        except requests.HTTPError as e:
+            logger.warning("Indeed RSS HTTP error for query '%s': %s — skipping", q, e)
         except Exception as e:
-            logger.error("Indeed RSS fetch failed for query '%s': %s", q, e)
+            logger.warning("Indeed RSS fetch failed for query '%s': %s — skipping", q, e)
 
         time.sleep(1)  # polite delay between requests
 

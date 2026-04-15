@@ -121,9 +121,10 @@ def send_alert(
 
     caption = _format_message(job_dict, pdf_path, ats_score, recruiter_info, cold_email)
 
-    # Try to render and send preview image
+    # Try to render and send preview image, then clean up the temp JPEG
     preview_sent = False
     if pdf_path and os.path.exists(pdf_path):
+        preview_path = ""
         try:
             from pipeline.latex_compiler import render_preview
             preview_path = render_preview(pdf_path)
@@ -131,6 +132,13 @@ def send_alert(
                 preview_sent = _send_photo(bot_token, chat_id, preview_path, caption)
         except Exception as e:
             logger.warning("Preview render failed: %s", e)
+        finally:
+            # Always remove the temp JPEG — only PDFs belong in resumes/
+            if preview_path and os.path.exists(preview_path):
+                try:
+                    os.remove(preview_path)
+                except OSError:
+                    pass
 
     # If preview failed, send text-only message
     if not preview_sent:

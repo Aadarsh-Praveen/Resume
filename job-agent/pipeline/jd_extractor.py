@@ -205,17 +205,19 @@ def extract_min_years(jd_text: str) -> Optional[int]:
             req_windows.append("\n".join(window_lines))
         i += 1
 
-    # Search requirement sections first
+    # Search requirement sections first.
+    # Use max() — if ANY requirement exceeds the threshold the job is out of range.
+    # e.g. "10+ years ML, 5+ years management" → max=10, correctly flags the job.
     if req_windows:
         req_years: list[int] = []
         for window in req_windows:
             req_years.extend(_years_from_text(window))
         if req_years:
-            return min(req_years)
+            return max(req_years)
 
     # Fallback: scan whole JD (less precise but better than nothing)
     all_years = _years_from_text(jd_text)
-    return min(all_years) if all_years else None
+    return max(all_years) if all_years else None
 
 
 def extract_jd_text(url: str) -> str:

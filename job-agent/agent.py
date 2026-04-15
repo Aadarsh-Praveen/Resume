@@ -61,7 +61,7 @@ from sources.email_parser import watch_linkedin_alerts
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
-from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER
+from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
@@ -130,6 +130,19 @@ def run_collection_cycle() -> int:
         if is_duplicate(company, title, DB_PATH):
             logger.debug("Duplicate: %s at %s — skipping", title, company)
             continue
+
+        # ── Location filter ───────────────────────────────────────────────
+        if LOCATION_FILTER:
+            loc = job.get("location", "").strip().lower()
+            filter_lower = LOCATION_FILTER.lower()
+            # Only reject if location is explicitly set AND doesn't match the
+            # target country/region AND isn't listed as remote.
+            if loc and "remote" not in loc and filter_lower not in loc:
+                logger.info(
+                    "Skipping %s at %s — location '%s' outside filter '%s'",
+                    title, company, job.get("location"), LOCATION_FILTER,
+                )
+                continue
 
         # Extract full JD text if not already present
         if not job.get("jd_text"):

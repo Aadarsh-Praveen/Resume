@@ -18,7 +18,7 @@ from config import LEVER_COMPANIES, ROLE_KEYWORDS, EXCLUDE_KEYWORDS
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.lever.co/v0/postings/{slug}?mode=json"
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 30
 
 
 def _is_relevant(title: str, description: str = "") -> bool:

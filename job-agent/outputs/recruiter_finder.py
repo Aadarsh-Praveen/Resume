@@ -79,10 +79,12 @@ def _apollo_people_search(domain: str, role_keywords: list[str], api_key: str) -
     """
     url = f"{APOLLO_API_BASE}/mixed_people/search"
 
-    # Search for people with recruiting/talent titles at this domain
+    # Search for people with recruiting/talent titles at this domain.
+    # NOTE: q_organization_domains must be a plain string, not a list — Apollo
+    # returns 422 Unprocessable Entity if passed as an array.
     payload = {
         "api_key": api_key,
-        "q_organization_domains": [domain],
+        "q_organization_domains": domain,   # string, e.g. "stripe.com"
         "person_titles": [
             "Recruiter",
             "Technical Recruiter",
@@ -100,6 +102,12 @@ def _apollo_people_search(domain: str, role_keywords: list[str], api_key: str) -
         resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 401:
             logger.error("Apollo.io: invalid API key")
+            return None
+        if resp.status_code == 422:
+            logger.error(
+                "Apollo.io: 422 Unprocessable Entity — bad request payload: %s",
+                resp.text[:300],
+            )
             return None
         if resp.status_code == 429:
             logger.warning("Apollo.io: rate limit hit")
