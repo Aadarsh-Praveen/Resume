@@ -1,11 +1,11 @@
 """
-Recruiter finder using Apollo.io API + Claude cold email generation.
+Recruiter finder using Hunter.io API + Claude cold email generation.
 
 Looks up the hiring manager / recruiter email and LinkedIn URL for a given
 company and role, then generates a personalised cold email draft.
 
-Apollo.io free tier: ~250 lookups/day — sufficient for personal use.
-API docs: https://apolloio.github.io/apollo-api-docs/
+Hunter.io free tier: 25 domain searches/month — sufficient for personal use.
+API docs: https://hunter.io/api-documentation/v2
 """
 
 import os
@@ -21,7 +21,7 @@ from config import COLD_EMAIL_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
-APOLLO_API_BASE = "https://api.apollo.io/v1"
+HUNTER_API_BASE = "https://api.hunter.io/v2"
 REQUEST_TIMEOUT = 15
 
 
@@ -69,89 +69,67 @@ def _extract_domain(job_url: str, company_name: str) -> str:
     return f"{clean}.com"
 
 
-# ── Apollo.io API ─────────────────────────────────────────────────────────────
+# ── Hunter.io API ─────────────────────────────────────────────────────────────
 
-def _apollo_people_search(domain: str, role_keywords: list[str], api_key: str) -> Optional[dict]:
+def _hunter_domain_search(domain: str, api_key: str) -> Optional[dict]:
     """
-    Search Apollo.io for people with recruiting/hiring titles at a domain.
+    Search Hunter.io for recruiter/talent emails at a domain.
 
-    Returns the first matching contact dict or None.
+    Returns the best matching contact dict or None.
     """
-    url = f"{APOLLO_API_BASE}/mixed_people/search"
-
-    # Apollo requires the API key in the X-Api-Key header (not in the body).
-    # Passing it in the body returns 422: "API key must be passed in X-Api-Key header".
-    # q_organization_domains must be a plain string, not a list.
-    headers = {
-        "X-Api-Key": api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    payload = {
-        "q_organization_domains": domain,   # string, e.g. "stripe.com"
-        "person_titles": [
-            "Recruiter",
-            "Technical Recruiter",
-            "Senior Recruiter",
-            "Talent Acquisition",
-            "Hiring Manager",
-            "Talent Partner",
-            "HR Manager",
-        ],
-        "per_page": 5,
-        "page": 1,
+    url = f"{HUNTER_API_BASE}/domain-search"
+    params = {
+        "domain": domain,
+        "limit": 5,
+        "api_key": api_key,
     }
 
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 401:
-            logger.error("Apollo.io: invalid API key")
-            return None
-        if resp.status_code == 422:
-            logger.error(
-                "Apollo.io: 422 Unprocessable Entity — bad request payload: %s",
-                resp.text[:300],
-            )
+            logger.error("Hunter.io: invalid API key")
             return None
         if resp.status_code == 429:
-            logger.warning("Apollo.io: rate limit hit")
+            logger.warning("Hunter.io: rate limit hit")
+            return None
+        if resp.status_code == 400:
+            logger.error("Hunter.io: bad request — %s", resp.text[:200])
             return None
         resp.raise_for_status()
 
-        data = resp.json()
-        people = data.get("people", [])
+        data = resp.json().get("data", {})
+        emails = data.get("emails", [])
 
-        if not people:
-            logger.info("Apollo.io: no results for domain %s", domain)
+        if not emails:
+            logger.info("Hunter.io: no results for domain %s", domain)
             return None
 
-        # Prefer people whose title includes "talent", "recruit", or "hiring"
-        for person in people:
-            title = (person.get("title") or "").lower()
-            if any(kw in title for kw in ["recruit", "talent", "hiring", "hr"]):
-                return _extract_contact(person)
+        # Prefer entries whose position matches recruiter/talent/hiring/hr
+        recruiter_kws = ["recruit", "talent", "hiring", "hr"]
+        for entry in emails:
+            position = (entry.get("position") or "").lower()
+            if any(kw in position for kw in recruiter_kws):
+                return _extract_hunter_contact(entry, domain)
 
-        # Fall back to first result
-        return _extract_contact(people[0])
+        # Fall back to highest confidence score
+        best = max(emails, key=lambda e: e.get("confidence", 0))
+        return _extract_hunter_contact(best, domain)
 
     except requests.RequestException as e:
-        logger.error("Apollo.io search failed: %s", e)
+        logger.error("Hunter.io search failed: %s", e)
         return None
 
 
-def _extract_contact(person: dict) -> dict:
-    """Extract relevant contact fields from an Apollo person dict."""
-    email = person.get("email") or ""
-    if not email:
-        # Try email_status or revealed_for_current_team
-        email = person.get("revealed_for_current_team", {}).get("email", "")
-
+def _extract_hunter_contact(entry: dict, domain: str) -> dict:
+    """Extract relevant contact fields from a Hunter.io email entry."""
+    first = entry.get("first_name", "") or ""
+    last = entry.get("last_name", "") or ""
     return {
-        "name": f"{person.get('first_name', '')} {person.get('last_name', '')}".strip(),
-        "title": person.get("title", ""),
-        "email": email,
-        "linkedin_url": person.get("linkedin_url", ""),
-        "company": person.get("organization", {}).get("name", ""),
+        "name": f"{first} {last}".strip(),
+        "title": entry.get("position", ""),
+        "email": entry.get("value", ""),
+        "linkedin_url": entry.get("linkedin", "") or "",
+        "company": domain,
     }
 
 
@@ -166,23 +144,23 @@ def find_recruiter(
 
     Args:
         company:   Company display name.
-        job_title: Job title (used for context, not for Apollo query).
+        job_title: Job title (used for logging context only).
         job_url:   Job URL (used to infer company domain).
-        api_key:   Apollo.io API key. Falls back to APOLLO_API_KEY env var.
+        api_key:   Hunter.io API key. Falls back to HUNTER_API_KEY env var.
 
     Returns:
         Dict with name, title, email, linkedin_url — or None if not found.
     """
-    api_key = api_key or os.getenv("APOLLO_API_KEY", "")
+    api_key = api_key or os.getenv("HUNTER_API_KEY", "")
 
     if not api_key:
-        logger.warning("Apollo API key not configured — skipping recruiter lookup")
+        logger.warning("Hunter.io API key not configured — skipping recruiter lookup")
         return None
 
     domain = _extract_domain(job_url, company)
     logger.info("Looking up recruiter for %s (domain: %s)", company, domain)
 
-    contact = _apollo_people_search(domain, [job_title], api_key)
+    contact = _hunter_domain_search(domain, api_key)
 
     if contact:
         logger.info("Found recruiter: %s (%s)", contact.get("name"), contact.get("email"))

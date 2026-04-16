@@ -128,18 +128,25 @@ BAMBOOHR_COMPANIES = {
 # ── Workday target companies (JSON API — no browser required) ─────────────────
 # Format: { "tenant": {"board": str, "name": str, "search": str} }
 # Note: Some Workday tenants (Tesla, Apple, Salesforce, AMD) return 422 —
-#       they require a CSRF token header not included here. Only NVIDIA is
-#       confirmed working via unauthenticated POST.
+#       they require a CSRF token header. Use WORKDAY_CSRF_COMPANIES for those.
 WORKDAY_API_COMPANIES = {
     "nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA", "search": "data scientist"},
 }
 
+# ── Workday CSRF companies (require CSRF token from careers page) ─────────────
+# Format: same as WORKDAY_API_COMPANIES
+WORKDAY_CSRF_COMPANIES = {
+    "apple":      {"board": "apple-jobs",           "name": "Apple",      "search": "machine learning"},
+    "salesforce": {"board": "External_Career_Site", "name": "Salesforce", "search": "data scientist"},
+    "tesla":      {"board": "TeslaCareerSite",       "name": "Tesla",      "search": "data scientist"},
+    "amd":        {"board": "AMD",                  "name": "AMD",        "search": "machine learning"},
+}
+
 # ── Custom career page companies (own APIs — not Workday) ─────────────────────
 # Valid keys: "google", "meta", "microsoft", "amazon"
-# Note: google (404), meta (400), microsoft (DNS) are returning errors —
-#       only "amazon" is confirmed working. Add others back when endpoints
-#       are verified.
-CUSTOM_CAREER_COMPANIES = ["amazon"]
+# All four are enabled. Google/Meta/Microsoft use updated endpoints with
+# browser-mimic headers — they return 403 from server IPs but work locally.
+CUSTOM_CAREER_COMPANIES = ["google", "meta", "microsoft", "amazon"]
 
 # ── Keyword filters (jobs must match at least one) ────────────────────────────
 ROLE_KEYWORDS = [

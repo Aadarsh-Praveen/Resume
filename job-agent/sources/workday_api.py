@@ -18,11 +18,12 @@ Job URL format:
 import logging
 import re
 import time
+import uuid
 from typing import Optional
 
 import requests
 
-from config import ROLE_KEYWORDS, EXCLUDE_KEYWORDS, WORKDAY_API_COMPANIES
+from config import ROLE_KEYWORDS, EXCLUDE_KEYWORDS, WORKDAY_API_COMPANIES, WORKDAY_CSRF_COMPANIES
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,54 @@ HEADERS = {
 }
 
 
+CAREERS_PAGE_TEMPLATE = (
+    "https://{tenant}.wd5.myworkdayjobs.com/en-US/{board}"
+)
+
+
+def _get_csrf_session(tenant: str, board: str) -> tuple:
+    """
+    Create a requests Session with cookies + a CSRF token for Workday tenants
+    that require it (Apple, Salesforce, Tesla, AMD).
+
+    Strategy:
+    1. GET the careers page to set session cookies
+    2. Extract CSRF token from cookies or page HTML
+    3. Fall back to a random UUID (some tenants only check token presence)
+
+    Returns (session, csrf_token).
+    """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    careers_url = CAREERS_PAGE_TEMPLATE.format(tenant=tenant, board=board)
+    csrf_token = str(uuid.uuid4())  # fallback
+
+    try:
+        resp = session.get(careers_url, timeout=REQUEST_TIMEOUT)
+        # Check cookies first
+        for cookie_name in ("PLAY_SESSION", "JSESSIONID", "PLAY_CSRF_TOKEN"):
+            token = session.cookies.get(cookie_name)
+            if token:
+                csrf_token = token
+                break
+        else:
+            # Search page HTML for embedded CSRF token
+            html = resp.text
+            for pattern in (
+                r'"csrfToken"\s*:\s*"([^"]+)"',
+                r"var csrfToken\s*=\s*['\"]([^'\"]+)['\"]",
+            ):
+                m = re.search(pattern, html)
+                if m:
+                    csrf_token = m.group(1)
+                    break
+    except requests.RequestException as e:
+        logger.warning("CSRF session setup failed for %s/%s: %s", tenant, board, e)
+
+    return session, csrf_token
+
+
 def _is_relevant(title: str) -> bool:
     t = title.lower()
     if not any(kw in t for kw in ROLE_KEYWORDS):
@@ -60,6 +109,7 @@ def _fetch_company_jobs(
     board: str,
     company_name: str,
     search_text: str,
+    use_csrf: bool = False,
 ) -> list[dict]:
     """Fetch jobs for one Workday company via the JSON API."""
     url = API_URL_TEMPLATE.format(tenant=tenant, board=board)
@@ -69,14 +119,29 @@ def _fetch_company_jobs(
         "searchText": search_text,
     }
 
+    if use_csrf:
+        session, csrf_token = _get_csrf_session(tenant, board)
+        post_headers = {**HEADERS, "X-CSRF-Token": csrf_token}
+    else:
+        session = None
+        post_headers = HEADERS
+
     for attempt in range(3):
         try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers=HEADERS,
-                timeout=REQUEST_TIMEOUT,
-            )
+            if session is not None:
+                resp = session.post(
+                    url,
+                    json=payload,
+                    headers=post_headers,
+                    timeout=REQUEST_TIMEOUT,
+                )
+            else:
+                resp = requests.post(
+                    url,
+                    json=payload,
+                    headers=post_headers,
+                    timeout=REQUEST_TIMEOUT,
+                )
             if resp.status_code == 404:
                 logger.warning("Workday: board not found for %s (%s/%s)", company_name, tenant, board)
                 return []
@@ -146,19 +211,26 @@ def _fetch_company_jobs(
     return jobs
 
 
-def fetch_workday_jobs(companies: Optional[dict] = None) -> list[dict]:
+def fetch_workday_jobs(
+    companies: Optional[dict] = None,
+    csrf_companies: Optional[dict] = None,
+) -> list[dict]:
     """
     Fetch jobs from all configured Workday companies.
 
     Args:
-        companies: Dict of tenant → {board, name, search}
-                   Defaults to config.WORKDAY_API_COMPANIES.
+        companies:      Dict of tenant → {board, name, search} for standard tenants.
+                        Defaults to config.WORKDAY_API_COMPANIES.
+        csrf_companies: Dict of tenant → {board, name, search} for CSRF tenants.
+                        Defaults to config.WORKDAY_CSRF_COMPANIES.
 
     Returns:
         List of job dicts.
     """
     if companies is None:
         companies = WORKDAY_API_COMPANIES
+    if csrf_companies is None:
+        csrf_companies = WORKDAY_CSRF_COMPANIES
 
     all_jobs: list[dict] = []
 
@@ -169,11 +241,25 @@ def fetch_workday_jobs(companies: Optional[dict] = None) -> list[dict]:
 
         logger.info("Workday: polling %s (tenant: %s)", name, tenant)
         try:
-            jobs = _fetch_company_jobs(tenant, board, name, search)
+            jobs = _fetch_company_jobs(tenant, board, name, search, use_csrf=False)
             logger.info("Workday %s: %d relevant jobs", name, len(jobs))
             all_jobs.extend(jobs)
         except Exception as e:
             logger.error("Workday: %s failed: %s", name, e)
+        time.sleep(0.5)
+
+    for tenant, cfg in csrf_companies.items():
+        board = cfg["board"]
+        name = cfg["name"]
+        search = cfg.get("search", "data scientist")
+
+        logger.info("Workday CSRF: polling %s (tenant: %s)", name, tenant)
+        try:
+            jobs = _fetch_company_jobs(tenant, board, name, search, use_csrf=True)
+            logger.info("Workday CSRF %s: %d relevant jobs", name, len(jobs))
+            all_jobs.extend(jobs)
+        except Exception as e:
+            logger.error("Workday CSRF: %s failed: %s", name, e)
         time.sleep(0.5)
 
     logger.info("Workday total: %d jobs", len(all_jobs))

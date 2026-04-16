@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock, call
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from sources.workday_api import _fetch_company_jobs, fetch_workday_jobs
+from sources.workday_api import _fetch_company_jobs, fetch_workday_jobs, _get_csrf_session
 
 
 SAMPLE_RESPONSE = {
@@ -229,7 +229,7 @@ class TestFetchWorkdayJobs(unittest.TestCase):
             "nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA", "search": "data scientist"},
             "tesla":  {"board": "TeslaCareerSite",          "name": "Tesla",  "search": "data scientist"},
         }
-        jobs = fetch_workday_jobs(companies)
+        jobs = fetch_workday_jobs(companies, csrf_companies={})
         self.assertEqual(len(jobs), 2)  # one result per company
         self.assertEqual(mock_fetch.call_count, 2)
 
@@ -237,10 +237,10 @@ class TestFetchWorkdayJobs(unittest.TestCase):
     def test_passes_correct_args_to_fetcher(self, mock_fetch):
         mock_fetch.return_value = []
         companies = {
-            "apple": {"board": "Apple", "name": "Apple", "search": "machine learning"},
+            "apple": {"board": "apple-jobs", "name": "Apple", "search": "machine learning"},
         }
-        fetch_workday_jobs(companies)
-        mock_fetch.assert_called_once_with("apple", "Apple", "Apple", "machine learning")
+        fetch_workday_jobs(companies, csrf_companies={})
+        mock_fetch.assert_called_once_with("apple", "apple-jobs", "Apple", "machine learning", use_csrf=False)
 
     @patch("sources.workday_api._fetch_company_jobs")
     def test_uses_default_search_when_not_specified(self, mock_fetch):
@@ -248,8 +248,8 @@ class TestFetchWorkdayJobs(unittest.TestCase):
         companies = {
             "nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA"},
         }
-        fetch_workday_jobs(companies)
-        mock_fetch.assert_called_once_with("nvidia", "NVIDIAExternalCareerSite", "NVIDIA", "data scientist")
+        fetch_workday_jobs(companies, csrf_companies={})
+        mock_fetch.assert_called_once_with("nvidia", "NVIDIAExternalCareerSite", "NVIDIA", "data scientist", use_csrf=False)
 
     @patch("sources.workday_api._fetch_company_jobs")
     def test_continues_on_company_failure(self, mock_fetch):
@@ -259,8 +259,83 @@ class TestFetchWorkdayJobs(unittest.TestCase):
             "tesla":  {"board": "TeslaCareerSite",          "name": "Tesla",  "search": "data scientist"},
         }
         # Should not raise — errors per company are caught
-        jobs = fetch_workday_jobs(companies)
+        jobs = fetch_workday_jobs(companies, csrf_companies={})
         self.assertIsInstance(jobs, list)
+
+    @patch("sources.workday_api._fetch_company_jobs")
+    def test_csrf_companies_processed_with_use_csrf_true(self, mock_fetch):
+        mock_fetch.return_value = []
+        csrf_companies = {
+            "apple": {"board": "apple-jobs", "name": "Apple", "search": "machine learning"},
+        }
+        fetch_workday_jobs(companies={}, csrf_companies=csrf_companies)
+        mock_fetch.assert_called_once_with("apple", "apple-jobs", "Apple", "machine learning", use_csrf=True)
+
+    @patch("sources.workday_api._fetch_company_jobs")
+    def test_aggregates_standard_and_csrf_companies(self, mock_fetch):
+        mock_fetch.return_value = [{
+            "title": "Data Scientist", "company": "Test",
+            "url": "https://example.com/1", "location": "US",
+            "jd_text": "", "source": "workday", "posted_date": "",
+        }]
+        jobs = fetch_workday_jobs(
+            companies={"nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA", "search": "ds"}},
+            csrf_companies={"apple": {"board": "apple-jobs", "name": "Apple", "search": "ml"}},
+        )
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+
+class TestGetCsrfSession(unittest.TestCase):
+
+    @patch("sources.workday_api.requests.Session")
+    def test_returns_session_and_token(self, mock_session_cls):
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = ""
+        mock_session.get.return_value = mock_resp
+        mock_session.cookies.get.return_value = None
+        mock_session_cls.return_value = mock_session
+
+        session, token = _get_csrf_session("apple", "apple-jobs")
+        self.assertIsNotNone(token)
+        self.assertTrue(len(token) > 0)
+
+    @patch("sources.workday_api.requests.Session")
+    def test_extracts_token_from_cookie(self, mock_session_cls):
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = ""
+        mock_session.get.return_value = mock_resp
+        # Return token for PLAY_SESSION cookie
+        mock_session.cookies.get.side_effect = lambda name: "test-csrf-token" if name == "PLAY_SESSION" else None
+        mock_session_cls.return_value = mock_session
+
+        session, token = _get_csrf_session("apple", "apple-jobs")
+        self.assertEqual(token, "test-csrf-token")
+
+    @patch("sources.workday_api.requests.Session")
+    def test_extracts_token_from_html(self, mock_session_cls):
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = 'var config = {"csrfToken": "html-csrf-token", "other": true};'
+        mock_session.get.return_value = mock_resp
+        mock_session.cookies.get.return_value = None
+        mock_session_cls.return_value = mock_session
+
+        session, token = _get_csrf_session("salesforce", "External_Career_Site")
+        self.assertEqual(token, "html-csrf-token")
+
+    @patch("sources.workday_api.requests.Session")
+    def test_falls_back_to_uuid_on_network_error(self, mock_session_cls):
+        import requests as req_lib
+        mock_session = MagicMock()
+        mock_session.get.side_effect = req_lib.ConnectionError("timeout")
+        mock_session_cls.return_value = mock_session
+
+        session, token = _get_csrf_session("tesla", "TeslaCareerSite")
+        # UUID fallback: 36 chars with dashes
+        self.assertEqual(len(token), 36)
 
 
 if __name__ == "__main__":

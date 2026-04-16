@@ -49,6 +49,8 @@ def _fetch_google(search_terms: list[str]) -> list[dict]:
     jobs = []
     seen: set[str] = set()
 
+    google_headers = {**HEADERS, "Referer": "https://careers.google.com/"}
+
     for term in search_terms:
         url = "https://careers.google.com/api/jobs/jobs-v1/search/"
         params = {
@@ -58,7 +60,7 @@ def _fetch_google(search_terms: list[str]) -> list[dict]:
             "page_size": 20,
         }
         try:
-            resp = requests.get(url, params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = requests.get(url, params=params, headers=google_headers, timeout=REQUEST_TIMEOUT)
             if resp.status_code in (403, 429):
                 logger.warning("Google Careers: blocked (%d) — skipping '%s'", resp.status_code, term)
                 continue
@@ -128,6 +130,13 @@ def _fetch_meta(search_terms: list[str]) -> list[dict]:
     }
     """
 
+    meta_headers = {
+        **HEADERS,
+        "X-FB-Friendly-Name": "CareersJobSearchResultsQuery",
+        "X-FB-HTTP-Engine": "Liger",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
     for term in search_terms:
         payload = {
             "query": query,
@@ -138,6 +147,7 @@ def _fetch_meta(search_terms: list[str]) -> list[dict]:
                     "offices": [],
                     "roles": [],
                     "leadership_levels": [],
+                    "location_preference": ["United States"],
                     "results_per_page": 20,
                     "is_leadership": False,
                     "remote": False,
@@ -145,7 +155,7 @@ def _fetch_meta(search_terms: list[str]) -> list[dict]:
             },
         }
         try:
-            resp = requests.post(graphql_url, json=payload, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = requests.post(graphql_url, json=payload, headers=meta_headers, timeout=REQUEST_TIMEOUT)
             if resp.status_code in (403, 429):
                 logger.warning("Meta Careers: blocked (%d) — skipping '%s'", resp.status_code, term)
                 continue
@@ -194,20 +204,18 @@ def _fetch_meta(search_terms: list[str]) -> list[dict]:
 def _fetch_microsoft(search_terms: list[str]) -> list[dict]:
     """
     Microsoft Careers public search API.
-    Endpoint: https://gcsapi.microsoft.com/api/jobs/search
+    Endpoint: https://careers.microsoft.com/global/en/search
     """
     jobs = []
     seen: set[str] = set()
 
     for term in search_terms:
-        url = "https://gcsapi.microsoft.com/api/jobs/search"
+        url = "https://careers.microsoft.com/global/en/search"
         params = {
-            "keyword": term,
-            "location": "United States",
-            "pg": 1,
-            "pgSz": 20,
-            "o": "Relevance",
-            "flt": True,
+            "q": term,
+            "lc": "en_us",
+            "from": 0,
+            "count": 20,
         }
         try:
             resp = requests.get(url, params=params, headers=HEADERS, timeout=REQUEST_TIMEOUT)
