@@ -79,11 +79,15 @@ def _apollo_people_search(domain: str, role_keywords: list[str], api_key: str) -
     """
     url = f"{APOLLO_API_BASE}/mixed_people/search"
 
-    # Search for people with recruiting/talent titles at this domain.
-    # NOTE: q_organization_domains must be a plain string, not a list — Apollo
-    # returns 422 Unprocessable Entity if passed as an array.
+    # Apollo requires the API key in the X-Api-Key header (not in the body).
+    # Passing it in the body returns 422: "API key must be passed in X-Api-Key header".
+    # q_organization_domains must be a plain string, not a list.
+    headers = {
+        "X-Api-Key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
     payload = {
-        "api_key": api_key,
         "q_organization_domains": domain,   # string, e.g. "stripe.com"
         "person_titles": [
             "Recruiter",
@@ -99,7 +103,7 @@ def _apollo_people_search(domain: str, role_keywords: list[str], api_key: str) -
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+        resp = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 401:
             logger.error("Apollo.io: invalid API key")
             return None

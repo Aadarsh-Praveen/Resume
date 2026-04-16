@@ -94,18 +94,19 @@ BAMBOOHR_COMPANIES = {
 
 # ── Workday target companies (JSON API — no browser required) ─────────────────
 # Format: { "tenant": {"board": str, "name": str, "search": str} }
+# Note: Some Workday tenants (Tesla, Apple, Salesforce, AMD) return 422 —
+#       they require a CSRF token header not included here. Only NVIDIA is
+#       confirmed working via unauthenticated POST.
 WORKDAY_API_COMPANIES = {
-    "nvidia":     {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA",      "search": "data scientist"},
-    "tesla":      {"board": "TeslaCareerSite",          "name": "Tesla",       "search": "data scientist"},
-    "apple":      {"board": "Apple",                    "name": "Apple",       "search": "machine learning"},
-    "salesforce": {"board": "External_Career_Site",     "name": "Salesforce",  "search": "data scientist"},
-    "amd":        {"board": "AMD",                      "name": "AMD",         "search": "machine learning"},
+    "nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA", "search": "data scientist"},
 }
 
 # ── Custom career page companies (own APIs — not Workday) ─────────────────────
-# These companies have custom public JSON / GraphQL endpoints.
 # Valid keys: "google", "meta", "microsoft", "amazon"
-CUSTOM_CAREER_COMPANIES = ["google", "meta", "microsoft", "amazon"]
+# Note: google (404), meta (400), microsoft (DNS) are returning errors —
+#       only "amazon" is confirmed working. Add others back when endpoints
+#       are verified.
+CUSTOM_CAREER_COMPANIES = ["amazon"]
 
 # ── Keyword filters (jobs must match at least one) ────────────────────────────
 ROLE_KEYWORDS = [
