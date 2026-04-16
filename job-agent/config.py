@@ -60,6 +60,7 @@ LINKEDIN_QUERIES = [
 # ── Target companies for Greenhouse / Lever / Ashby APIs ─────────────────────
 # Format: { "slug": {"ats": "greenhouse|lever|ashby|bamboohr", "name": "Display Name"} }
 GREENHOUSE_COMPANIES = {
+    # ── Original 10 ──────────────────────────────────────────────────────────
     "stripe": "Stripe",
     "airbnb": "Airbnb",
     "coinbase": "Coinbase",
@@ -70,6 +71,27 @@ GREENHOUSE_COMPANIES = {
     "databricks": "Databricks",
     "snowflake": "Snowflake",
     "scale-ai": "Scale AI",
+    # ── Additional top DS/ML companies ───────────────────────────────────────
+    "doordash": "DoorDash",
+    "instacart": "Instacart",
+    "pinterest": "Pinterest",
+    "plaid": "Plaid",
+    "cloudflare": "Cloudflare",
+    "grammarly": "Grammarly",
+    "hubspot": "HubSpot",
+    "mongodb": "MongoDB",
+    "twilio": "Twilio",
+    "affirm": "Affirm",
+    "gusto": "Gusto",
+    "chime": "Chime",
+    "nerdwallet": "NerdWallet",
+    "zendesk": "Zendesk",
+    "gitlab": "GitLab",
+    "checkr": "Checkr",
+    "block": "Block (Square)",
+    "rippling": "Rippling",
+    "coupang": "Coupang",
+    "palantir": "Palantir",
 }
 
 LEVER_COMPANIES = {
@@ -78,6 +100,10 @@ LEVER_COMPANIES = {
     "duolingo": "Duolingo",
     "lyft": "Lyft",
     "asana": "Asana",
+    "robinhood": "Robinhood",
+    "airtable": "Airtable",
+    "benchling": "Benchling",
+    "scale": "Scale AI (Lever)",
 }
 
 ASHBY_COMPANIES = {
@@ -86,6 +112,13 @@ ASHBY_COMPANIES = {
     "retool": "Retool",
     "ramp": "Ramp",
     "brex": "Brex",
+    "cohere": "Cohere",
+    "perplexity-ai": "Perplexity AI",
+    "together-ai": "Together AI",
+    "runway": "Runway",
+    "mercury": "Mercury",
+    "modal-labs": "Modal",
+    "qdrant": "Qdrant",
 }
 
 BAMBOOHR_COMPANIES = {
@@ -139,17 +172,33 @@ EXCLUDE_KEYWORDS = [
 # ── Resume tailoring Claude prompt ───────────────────────────────────────────
 TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist. Tailor the provided LaTeX resume to the job description.
 
-━━ PAGE CONSTRAINT — ABSOLUTE ━━
-The compiled PDF must be exactly 1 page. Apply ALL cuts below before returning:
+━━ PAGE CONSTRAINT — MUST FILL EXACTLY 1 PAGE ━━
+The PDF must fill the FULL page — not overflow, not leave whitespace at the bottom.
+Target: content ends within 10pt of the bottom margin.
 
-  Work experience bullets per role (HARD CAPS — no exceptions):
-    • Most recent role:  3 bullets max
-    • Second role:       3 bullets max
-    • Oldest role:       2 bullets max
-  Every bullet: maximum 20 words — count every word; truncate any that exceed this
-  Projects: top 2 most JD-relevant only, 2 bullets each, max 20 words per bullet
-  Summary: exactly 2 sentences, max 3 lines total
-  Skills: max 4 categories, max 6 tools each — remove entire categories not in JD
+  CONTENT BUDGET — use as much as fits, stay within these ceilings:
+    Work experience bullets per role:
+      • Most recent role:   4 bullets (use all 4 unless truly irrelevant to JD)
+      • Second role:        3–4 bullets
+      • Oldest role:        2–3 bullets
+    Every bullet: 20–28 words — must be a complete, metric-driven sentence
+    Projects: top 2 most JD-relevant, 2–3 bullets each (28 words max per bullet)
+    Summary: exactly 3 sentences, 3–4 lines
+    Skills: 4–5 categories, 6–8 tools each
+
+  FILLING THE PAGE:
+    If content ends before the bottom, in order of preference:
+      1. Add a 4th bullet to the most recent role (from the original resume)
+      2. Add a 3rd bullet to the second or third role
+      3. Add a 3rd bullet to a project
+      4. Expand summary to 4 lines
+    Never add blank lines or \\vspace to fill — add real content
+
+  OVERFLOW: if PDF exceeds 1 page, cut in reverse order:
+      1. Drop oldest role to 2 bullets
+      2. Trim bullets to 20 words
+      3. Drop projects to 2 bullets each
+      4. Shrink summary to 2 sentences
 
 ━━ BULLET STRUCTURE ━━
 Every bullet must follow: [OUTCOME + METRIC] by [HOW YOU DID IT]
@@ -158,24 +207,23 @@ Every bullet must follow: [OUTCOME + METRIC] by [HOW YOU DID IT]
 
 Rules:
   • Outcome-first, method-second — always
-  • At least one hard metric per bullet (%, ms, $, scale, accuracy)
+  • At least one hard metric per bullet (%, ms, $, scale, accuracy, users)
   • Show specific tools — no generic verbs without a named technology
 
 ━━ LAYOUT ANTI-PATTERNS — NEVER DO ANY OF THESE ━━
-  • NEVER use negative \\vspace (e.g. \\vspace{-11pt}, \\vspace{-8pt}) anywhere
+  • NEVER use negative \\vspace anywhere (e.g. \\vspace{-11pt}, \\vspace{-8pt})
   • NEVER put product names, domain labels, or pipe-separated extras on the company line
     ✗  IpserLab LLC, Fort Worth, TX $|$ \\textit{Product: Smart Pantry} \\vspace{-11pt} \\\\
     ✓  IpserLab LLC \\hfill Fort Worth, TX
-  • NEVER use \\vspace before \\begin{itemize} — it causes text overlap
+  • NEVER add \\vspace before \\begin{itemize} — it causes text overlap
   • Company line format EXACTLY: CompanyName \\hfill City, ST
-    - company name only (no product, no domain, no $|$ separators)
-    - location only (city + state abbreviation, nothing else)
-  • If the input template has \\vspace{-...} between a company line and \\begin{itemize},
-    DELETE that \\vspace in your output — replace it with nothing
+    (company name only; location = city + state only; no pipes, no extra text)
+  • If the input has \\vspace{-...} between a company line and \\begin{itemize}, DELETE it
 
 ━━ SUMMARY RULES ━━
   Sentence 1: Role title matching JD + years + top 2 domains
-  Sentence 2: 2–3 hard metrics from most relevant experience + key tech stack
+  Sentence 2: 2–3 hard metrics from most impactful experience
+  Sentence 3: Key tech stack that directly matches the JD + stakeholder value delivered
 
 ━━ CONTENT RULES ━━
   1. NEVER fabricate experience, tools, metrics, or employers not in the original
@@ -185,11 +233,11 @@ Rules:
   5. Only include skills the candidate demonstrably has — no aspirational additions
 
 ━━ SKILLS SECTION ━━
-  • Only list skills from the JD OR skills demonstrated in the bullets above
-  • Maximum 4 categories, 6 tools each
-  • Remove entire skill categories absent from the JD
+  • Only list skills from the JD OR demonstrated in the bullets above
+  • 4–5 categories, 6–8 tools each
+  • Remove entire categories absent from the JD
 
-━━ BANNED PHRASES (sound immediately AI-written) ━━
+━━ BANNED PHRASES ━━
   leveraged · utilized · spearheaded · seamlessly · passionate about
   proven ability to · end-to-end (max once) · cross-functional (max once)
 
@@ -199,7 +247,7 @@ Rules:
   • Escape bare special chars: % → \\%, & → \\&
   • Never truncate — return the full file
 
-The output is piped directly to pdflatex. Any LaTeX error or PDF exceeding 1 page triggers an automatic retry."""
+The output is piped directly to pdflatex. LaTeX errors or PDFs not filling 1 page trigger an automatic retry."""
 
 COLD_EMAIL_SYSTEM_PROMPT = """You are a professional email copywriter specialising in job application outreach.
 Write a cold email from a job applicant to a recruiter/hiring manager.

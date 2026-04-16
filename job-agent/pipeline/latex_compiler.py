@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 PDFLATEX = os.getenv("PDFLATEX_BIN", "pdflatex")
 PDFINFO = os.getenv("PDFINFO_BIN", "pdfinfo")
 PDFTOPPM = os.getenv("PDFTOPPM_BIN", "pdftoppm")
+PDFTOTEXT = os.getenv("PDFTOTEXT_BIN", "pdftotext")
 
 
 def compile_tex(
@@ -115,6 +116,31 @@ def get_page_count(pdf_path: str) -> int:
     except (subprocess.SubprocessError, FileNotFoundError, ValueError) as e:
         logger.warning("pdfinfo failed: %s", e)
         return -1
+
+
+def get_fill_percentage(pdf_path: str) -> float:
+    """
+    Estimate how full a single-page PDF is (0.0–1.0).
+
+    Uses pdftotext to count non-empty lines on the first page.
+    A dense A4 resume at 10pt fills ~55 lines; we treat 50+ as "full".
+    Returns 1.0 if pdftotext is unavailable (assume full → don't expand).
+    """
+    try:
+        result = subprocess.run(
+            [PDFTOTEXT, "-f", "1", "-l", "1", pdf_path, "-"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        lines = [ln for ln in result.stdout.split("\n") if ln.strip()]
+        # 50 non-empty lines ≈ full page; clamp to [0, 1]
+        fill = min(len(lines) / 50.0, 1.0)
+        logger.debug("Fill estimate: %d lines → %.0f%%", len(lines), fill * 100)
+        return fill
+    except Exception as e:
+        logger.warning("get_fill_percentage failed: %s", e)
+        return 1.0  # assume full — don't trigger unnecessary expansion
 
 
 def render_preview(pdf_path: str, dpi: int = 150) -> str:

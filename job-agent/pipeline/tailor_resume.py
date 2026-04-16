@@ -24,7 +24,7 @@ from config import (
     MAX_RETRIES,
     MAX_PAGE_RETRIES,
 )
-from pipeline.latex_compiler import compile_tex, get_page_count, sanitise_latex
+from pipeline.latex_compiler import compile_tex, get_page_count, get_fill_percentage, sanitise_latex
 from pipeline.ats_scorer import score_resume, get_missing_keywords
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,24 @@ def _build_fix_compile_prompt(broken_tex: str, error_log: str) -> str:
         f"=== COMPILE ERROR ===\n{error_log[:2000]}\n\n"
         f"=== BROKEN .TEX ===\n{broken_tex}\n\n"
         f"Fix ONLY the LaTeX error. Return the complete corrected .tex file and nothing else."
+    )
+
+
+def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
+    return (
+        f"This resume is only ~{fill_pct}% full — it must fill the ENTIRE page.\n\n"
+        f"Add content back from the original resume to fill the page:\n"
+        f"1. Expand most recent role to 4 bullets (pick the most JD-relevant from the original)\n"
+        f"2. Expand second role to 3–4 bullets\n"
+        f"3. Expand oldest role to 3 bullets\n"
+        f"4. Add a 3rd bullet to each project (must be metric-driven, 20–28 words)\n"
+        f"5. Expand summary to 3 full sentences (4 lines)\n"
+        f"6. Add more tools per skill category (up to 8 each)\n\n"
+        f"Every bullet: 20–28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
+        f"Do NOT add blank lines or \\\\vspace to fill — add real content only.\n"
+        f"Do NOT use negative \\\\vspace anywhere.\n"
+        f"Return ONLY the complete .tex file.\n\n"
+        f"=== CURRENT .TEX ===\n{sparse_tex}"
     )
 
 
@@ -219,6 +237,33 @@ def tailor_resume(
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after trim: {error_log}")
+
+    # ── Step 3b: Page fill check — expand if resume is under-full ────────────
+    for fill_attempt in range(2):  # at most 1 expand pass
+        fill = get_fill_percentage(pdf_path)
+        if fill >= 0.85:
+            logger.info("Page fill %.0f%% — OK", fill * 100)
+            break
+
+        logger.warning(
+            "Job #%d: page only %.0f%% full — asking Claude to expand (attempt %d)",
+            job_id, fill * 100, fill_attempt + 1,
+        )
+        expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
+        tex_content = _extract_tex(_call_claude(expand_prompt, client))
+        tex_content = sanitise_latex(tex_content)
+
+        success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+        if not success:
+            logger.warning("Expand recompile failed — keeping under-filled version")
+            break
+
+        # Verify we didn't overflow to 2 pages after expanding
+        if get_page_count(new_pdf) == 1:
+            pdf_path = new_pdf
+        else:
+            logger.warning("Expansion overflowed to 2 pages — keeping previous version")
+            break
 
     # ── Step 4: ATS keyword score gate ───────────────────────────────────────
     ats_score = 0.0
