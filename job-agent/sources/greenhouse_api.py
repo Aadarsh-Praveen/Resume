@@ -22,11 +22,11 @@ REQUEST_TIMEOUT = 15
 RETRY_BACKOFF = 2
 
 
-def _is_relevant(title: str, content: str = "") -> bool:
-    combined = (title + " " + content).lower()
-    if not any(kw in combined for kw in ROLE_KEYWORDS):
+def _is_relevant(title: str) -> bool:
+    t = title.lower()
+    if not any(kw in t for kw in ROLE_KEYWORDS):
         return False
-    if any(kw in combined for kw in EXCLUDE_KEYWORDS):
+    if any(kw in t for kw in EXCLUDE_KEYWORDS):
         return False
     return True
 
@@ -62,7 +62,7 @@ def _fetch_company_jobs(slug: str, company_name: str) -> list[dict]:
         if not title or not job_url:
             continue
 
-        if not _is_relevant(title, content):
+        if not _is_relevant(title):
             continue
 
         location = ""

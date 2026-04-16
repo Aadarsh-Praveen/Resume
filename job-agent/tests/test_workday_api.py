@@ -165,6 +165,40 @@ class TestFetchCompanyJobs(unittest.TestCase):
         self.assertEqual(jobs[0]["posted_date"], "2024-05-01")
 
     @patch("sources.workday_api.requests.post")
+    def test_n_locations_falls_back_to_external_path(self, mock_post):
+        """When locationsText is 'N Locations', location is parsed from externalPath."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "jobPostings": [
+                {
+                    "title": "Data Scientist",
+                    "externalPath": "job/US-CA-Santa-Clara/Data-Scientist-R12345",
+                    "locationsText": "3 Locations",
+                    "postedOn": "2024-04-01",
+                },
+                {
+                    "title": "Machine Learning Engineer",
+                    "externalPath": "job/China-Shanghai/MLE-R99999",
+                    "locationsText": "2 Locations",
+                    "postedOn": "2024-04-01",
+                },
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_post.return_value = mock_resp
+
+        jobs = _fetch_company_jobs("nvidia", "NVIDIAExternalCareerSite", "NVIDIA", "data scientist")
+        # US job: externalPath segment → "US, CA, Santa Clara"
+        us_job = next((j for j in jobs if "Data Scientist" in j["title"]), None)
+        self.assertIsNotNone(us_job)
+        self.assertEqual(us_job["location"], "US, CA, Santa Clara")
+        # China job: location parsed as "China, Shanghai"
+        china_job = next((j for j in jobs if "Machine Learning" in j["title"]), None)
+        self.assertIsNotNone(china_job)
+        self.assertEqual(china_job["location"], "China, Shanghai")
+
+    @patch("sources.workday_api.requests.post")
     def test_skips_posting_with_missing_external_path(self, mock_post):
         mock_resp = MagicMock()
         mock_resp.status_code = 200

@@ -16,6 +16,7 @@ Job URL format:
 """
 
 import logging
+import re
 import time
 from typing import Optional
 
@@ -45,11 +46,11 @@ HEADERS = {
 }
 
 
-def _is_relevant(title: str, description: str = "") -> bool:
-    combined = (title + " " + description).lower()
-    if not any(kw in combined for kw in ROLE_KEYWORDS):
+def _is_relevant(title: str) -> bool:
+    t = title.lower()
+    if not any(kw in t for kw in ROLE_KEYWORDS):
         return False
-    if any(kw in combined for kw in EXCLUDE_KEYWORDS):
+    if any(kw in t for kw in EXCLUDE_KEYWORDS):
         return False
     return True
 
@@ -104,13 +105,30 @@ def _fetch_company_jobs(
         external_path = (posting.get("externalPath") or "").strip("/")
         location = posting.get("locationsText") or posting.get("primaryLocation", "")
         posted = posting.get("postedOn", "")
+
+        # When locationsText is "N Locations", extract country/region from externalPath.
+        # externalPath format: "job/{LocationCode}/{Title_JR#}"
+        # LocationCode: {Country}-{State}-{City...} or {Country}-{City...}
+        # e.g. "job/US-CA-Santa-Clara/..." → "US, CA, Santa Clara"
+        #      "job/China-Shanghai/..."    → "China, Shanghai"
+        if re.match(r"^\d+\s+location", (location or "").lower()):
+            path_parts = external_path.split("/")
+            if len(path_parts) >= 2:
+                segs = path_parts[1].split("-")
+                if len(segs) >= 3:
+                    # Country-State-City (city may be multi-word)
+                    location = f"{segs[0]}, {segs[1]}, {' '.join(segs[2:])}"
+                elif len(segs) == 2:
+                    location = f"{segs[0]}, {segs[1]}"
+                else:
+                    location = segs[0]
         bullet_fields = posting.get("jobDescription", {})
         description = (bullet_fields.get("items") or [{}])[0].get("text", "") if bullet_fields else ""
 
         if not title or not external_path:
             continue
 
-        if not _is_relevant(title, description):
+        if not _is_relevant(title):
             continue
 
         job_url = JOB_URL_TEMPLATE.format(tenant=tenant, board=board, path=external_path)

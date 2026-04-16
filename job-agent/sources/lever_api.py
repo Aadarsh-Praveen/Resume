@@ -21,11 +21,11 @@ BASE_URL = "https://api.lever.co/v0/postings/{slug}?mode=json"
 REQUEST_TIMEOUT = 30
 
 
-def _is_relevant(title: str, description: str = "") -> bool:
-    combined = (title + " " + description).lower()
-    if not any(kw in combined for kw in ROLE_KEYWORDS):
+def _is_relevant(title: str) -> bool:
+    t = title.lower()
+    if not any(kw in t for kw in ROLE_KEYWORDS):
         return False
-    if any(kw in combined for kw in EXCLUDE_KEYWORDS):
+    if any(kw in t for kw in EXCLUDE_KEYWORDS):
         return False
     return True
 
@@ -88,7 +88,7 @@ def _fetch_company_jobs(slug: str, company_name: str) -> list[dict]:
 
         if not title or not job_url:
             continue
-        if not _is_relevant(title, description_text):
+        if not _is_relevant(title):
             continue
 
         location = posting.get("categories", {}).get("location", "")

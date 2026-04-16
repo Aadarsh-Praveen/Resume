@@ -48,7 +48,7 @@ class TestIsRelevant(unittest.TestCase):
         self.assertTrue(_is_relevant("Senior Data Scientist"))
 
     def test_ml_engineer_is_relevant(self):
-        self.assertTrue(_is_relevant("ML Engineer", "machine learning models"))
+        self.assertTrue(_is_relevant("ML Engineer"))
 
     def test_sales_director_not_relevant(self):
         self.assertFalse(_is_relevant("Director of Sales"))
