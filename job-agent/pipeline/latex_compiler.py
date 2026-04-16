@@ -188,19 +188,34 @@ def render_preview(pdf_path: str, dpi: int = 150) -> str:
 
 def sanitise_latex(tex_content: str) -> str:
     """
-    Basic LaTeX sanitiser — escapes bare special characters that Claude
-    occasionally produces outside of math/code environments.
+    LaTeX sanitiser applied before every pdflatex call.
 
-    This is a defensive pass applied BEFORE sending to pdflatex.
-    Only escapes % and & when they appear bare (not already preceded by backslash).
+    1. Strips ALL negative \\vspace{-...} — they cause company-line / bullet overlap.
+    2. Removes product/domain labels from company lines (pipe-separated extras).
+    3. Escapes bare % and & outside math/code environments.
     """
     result = tex_content
 
-    # Escape bare % (comments in LaTeX) — only when not already escaped
+    # ── 1. Remove ALL negative \vspace ────────────────────────────────────────
+    # Matches \vspace{-...} with any unit (pt, em, ex, mm, cm, in, bp, sp, dd, pc)
+    result = re.sub(r"\\vspace\{-[^}]+\}", "", result)
+
+    # ── 2. Strip pipe-separated product/domain labels from company lines ───────
+    # Pattern: "CompanyName, City, ST $|$ \textit{...} \\"  →  "CompanyName \hfill City, ST \\"
+    # Only match lines that end with \\ (company/role lines in resume)
+    result = re.sub(
+        r"(\\textbf\{[^}]+\}|[A-Za-z][\w\s,\.]+?)"   # company or role name
+        r",\s*([^$\\]+?)"                               # ", City, ST"
+        r"\s*\$\|\$\s*\\textit\{[^}]*\}"               # $|$ \textit{Product: ...}
+        r"(\s*\\\\)",                                   # trailing \\
+        lambda m: f"{m.group(1)} \\hfill {m.group(2).strip()}{m.group(3)}",
+        result,
+    )
+
+    # ── 3. Escape bare % (not already escaped) ────────────────────────────────
     result = re.sub(r"(?<!\\)%", r"\\%", result)
 
-    # Escape bare & (table cell separators used in plain text) — only when not escaped
-    # Skip if inside tabular/align environments — this is a best-effort pass
+    # ── 4. Escape bare & (not already escaped) ────────────────────────────────
     result = re.sub(r"(?<!\\)&", r"\\&", result)
 
     return result

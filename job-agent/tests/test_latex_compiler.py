@@ -50,7 +50,6 @@ class TestSanitiseLatex(unittest.TestCase):
 
     def test_already_escaped_percent_not_doubled(self):
         result = sanitise_latex(r"Score: 95\%")
-        # Should still be exactly one \%
         self.assertEqual(result.count(r"\%"), 1)
 
     def test_unescaped_ampersand_escaped(self):
@@ -60,6 +59,28 @@ class TestSanitiseLatex(unittest.TestCase):
     def test_normal_text_unchanged(self):
         result = sanitise_latex("Hello World")
         self.assertEqual(result, "Hello World")
+
+    def test_negative_vspace_removed(self):
+        result = sanitise_latex(r"Some text \vspace{-11pt} more text")
+        self.assertNotIn(r"\vspace{-11pt}", result)
+        self.assertIn("Some text", result)
+        self.assertIn("more text", result)
+
+    def test_negative_vspace_various_units_removed(self):
+        for unit in ["-8pt", "-1em", "-0.5cm"]:
+            tex = rf"\vspace{{{unit}}}"
+            result = sanitise_latex(tex)
+            self.assertNotIn(tex, result, f"Should remove \\vspace{{{unit}}}")
+
+    def test_positive_vspace_preserved(self):
+        result = sanitise_latex(r"\vspace{5pt}")
+        self.assertIn(r"\vspace{5pt}", result)
+
+    def test_multiple_negative_vspaces_all_removed(self):
+        tex = r"line1 \vspace{-11pt} \\ \vspace{-8pt} line2"
+        result = sanitise_latex(tex)
+        self.assertNotIn("-11pt", result)
+        self.assertNotIn("-8pt", result)
 
 
 class TestExtractErrors(unittest.TestCase):

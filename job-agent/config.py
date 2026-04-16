@@ -179,33 +179,28 @@ EXCLUDE_KEYWORDS = [
 # ── Resume tailoring Claude prompt ───────────────────────────────────────────
 TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist. Tailor the provided LaTeX resume to the job description.
 
-━━ PAGE CONSTRAINT — MUST FILL EXACTLY 1 PAGE ━━
-The PDF must fill the FULL page — not overflow, not leave whitespace at the bottom.
-Target: content ends within 10pt of the bottom margin.
+━━ SECTIONS TO INCLUDE (EXACTLY THESE, NO OTHERS) ━━
+  1. Header (name + contact)
+  2. Summary
+  3. Education
+  4. Skills
+  5. Work Experience
+  6. Projects
+  DO NOT include Certifications, Publications, or any other section.
+  Certifications and Publications overflow the 1-page budget — omit them entirely.
 
-  CONTENT BUDGET — use as much as fits, stay within these ceilings:
-    Work experience bullets per role:
-      • Most recent role:   4 bullets (use all 4 unless truly irrelevant to JD)
-      • Second role:        3–4 bullets
-      • Oldest role:        2–3 bullets
-    Every bullet: 20–28 words — must be a complete, metric-driven sentence
-    Projects: top 2 most JD-relevant, 2–3 bullets each (28 words max per bullet)
-    Summary: exactly 3 sentences, 3–4 lines
-    Skills: 4–5 categories, 6–8 tools each
+━━ CONTENT BUDGET — FIXED TARGETS ━━
+  Work experience bullets per role (use exactly these counts):
+    • Most recent role:   4 bullets
+    • Second role:        3 bullets
+    • Third/oldest role:  3 bullets
+  Every bullet: 20–28 words — must be a complete, metric-driven sentence.
+  Projects: top 2 most JD-relevant, 3 bullets each (28 words max per bullet).
+  Summary: exactly 3 sentences, 3 lines.
+  Skills: exactly 4 categories, 6–7 tools each.
 
-  FILLING THE PAGE:
-    If content ends before the bottom, in order of preference:
-      1. Add a 4th bullet to the most recent role (from the original resume)
-      2. Add a 3rd bullet to the second or third role
-      3. Add a 3rd bullet to a project
-      4. Expand summary to 4 lines
-    Never add blank lines or \\vspace to fill — add real content
-
-  OVERFLOW: if PDF exceeds 1 page, cut in reverse order:
-      1. Drop oldest role to 2 bullets
-      2. Trim bullets to 20 words
-      3. Drop projects to 2 bullets each
-      4. Shrink summary to 2 sentences
+  These targets are calibrated to fill exactly 1 A4 page at 10pt with 0.28in margins.
+  Do NOT deviate from these counts — deviating causes under- or over-fill.
 
 ━━ BULLET STRUCTURE ━━
 Every bullet must follow: [OUTCOME + METRIC] by [HOW YOU DID IT]
@@ -241,7 +236,7 @@ Rules:
 
 ━━ SKILLS SECTION ━━
   • Only list skills from the JD OR demonstrated in the bullets above
-  • 4–5 categories, 6–8 tools each
+  • Exactly 4 categories, 6–7 tools each
   • Remove entire categories absent from the JD
 
 ━━ BANNED PHRASES ━━
@@ -254,7 +249,7 @@ Rules:
   • Escape bare special chars: % → \\%, & → \\&
   • Never truncate — return the full file
 
-The output is piped directly to pdflatex. LaTeX errors or PDFs not filling 1 page trigger an automatic retry."""
+The output is piped directly to pdflatex. LaTeX errors or page-count failures trigger an automatic retry."""
 
 COLD_EMAIL_SYSTEM_PROMPT = """You are a professional email copywriter specialising in job application outreach.
 Write a cold email from a job applicant to a recruiter/hiring manager.
