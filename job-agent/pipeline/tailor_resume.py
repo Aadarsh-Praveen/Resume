@@ -248,12 +248,10 @@ def tailor_resume(
         tex_content = _extract_tex(_call_claude(retry_prompt, client))
         tex_content = sanitise_latex(tex_content)
 
-        # Recompile after keyword injection
+        # Recompile after keyword injection — next loop iteration re-scores
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry: {error_log}")
-
-        ats_score = score_resume(pdf_path, jd_text, client)
 
     logger.info(
         "Tailoring complete for job #%d — PDF: %s | ATS: %.1f%%",

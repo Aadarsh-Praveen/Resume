@@ -111,6 +111,7 @@ CUSTOM_CAREER_COMPANIES = ["amazon"]
 # ── Keyword filters (jobs must match at least one) ────────────────────────────
 ROLE_KEYWORDS = [
     "data scientist",
+    "data science",        # catches "Data Science Manager", "Head of Data Science"
     "machine learning",
     "ml engineer",
     "ml infrastructure",
