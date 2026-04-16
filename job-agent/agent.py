@@ -64,7 +64,7 @@ from sources.custom_careers import fetch_custom_career_jobs
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
-from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER
+from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER, ROLE_KEYWORDS, EXCLUDE_KEYWORDS
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
@@ -276,6 +276,14 @@ def process_job(job: dict) -> bool:
     company = job.get("company", "Unknown")
     title = job.get("title", "Unknown")
     jd_text = job.get("jd_text", "")
+
+    # Title-relevance guard — catches legacy DB entries inserted before the
+    # title-only filter was enforced. Skips without calling Claude.
+    title_lower = title.lower()
+    if not any(kw in title_lower for kw in ROLE_KEYWORDS) or any(kw in title_lower for kw in EXCLUDE_KEYWORDS):
+        logger.info("Skipping job #%d: '%s' at %s — not a DS/ML role", job_id, title, company)
+        mark_processed(job_id, None, None, "skipped_irrelevant", DB_PATH)
+        return False
 
     logger.info("Processing job #%d: %s at %s", job_id, title, company)
 

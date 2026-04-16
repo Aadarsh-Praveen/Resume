@@ -48,13 +48,25 @@ def _extract_tex(response_text: str) -> str:
     """
     Extract .tex content from Claude's response.
 
-    Claude should return raw .tex — but defensively strip any markdown
-    code fences if present.
+    Handles:
+    - Raw .tex (no fences)
+    - ```latex...``` or ```tex...``` or ``` ``` blocks (anywhere in the response)
+    - Leading/trailing explanation text
     """
-    # Strip ```latex or ```tex code fences
-    cleaned = re.sub(r"^```(?:latex|tex)?\s*\n?", "", response_text.strip())
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
-    return cleaned.strip()
+    text = response_text.strip()
+
+    # Try to find content inside a markdown code fence (anywhere in the response)
+    fence_match = re.search(r"```(?:latex|tex)?\s*\n([\s\S]+?)\n```", text)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    # No fences — find the start of actual LaTeX content (\documentclass or \begin{document})
+    doc_match = re.search(r"(\\documentclass[\s\S]+)", text)
+    if doc_match:
+        return doc_match.group(1).strip()
+
+    # Fallback: return as-is
+    return text
 
 
 def _build_tailoring_prompt(base_tex: str, jd_text: str) -> str:
