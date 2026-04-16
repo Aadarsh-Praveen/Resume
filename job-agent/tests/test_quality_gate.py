@@ -88,7 +88,7 @@ class TestRunQualityGates(unittest.TestCase):
         self.assertTrue(any("below minimum" in i for i in result.issues))
 
     @patch("pipeline.quality_gate.render_preview", return_value="/tmp/preview.jpg")
-    @patch("pipeline.quality_gate.score_resume", return_value=95.0)
+    @patch("pipeline.quality_gate.score_resume", return_value=96.0)  # above ATS_SCORE_MAX=95
     @patch("pipeline.quality_gate.get_page_count", return_value=1)
     @patch("pipeline.quality_gate.compile_tex", return_value=(True, "/tmp/resume.pdf", ""))
     def test_high_ats_score_flagged_but_not_failed(self, mock_compile, mock_pages, mock_score, mock_preview):

@@ -33,9 +33,9 @@ YOE_MAX_FILTER = 5                 # skip jobs requiring more than 5 years
 
 # ── ATS quality gates ─────────────────────────────────────────────────────────
 ATS_SCORE_MIN = 89        # below this → retry with missing keyword injection
-ATS_SCORE_MAX = 93        # above this → flag for manual review (keyword stuffing risk)
-MAX_RETRIES = 2           # max Claude retries per quality gate failure
-MAX_PAGE_RETRIES = 1      # max retries for page count gate
+ATS_SCORE_MAX = 95        # above this → flag for manual review (keyword stuffing risk)
+MAX_RETRIES = 3           # max Claude retries per quality gate failure
+MAX_PAGE_RETRIES = 2      # max retries for page count gate
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 POLL_INTERVAL_HOURS = 4   # how often to poll job sources
@@ -140,31 +140,42 @@ EXCLUDE_KEYWORDS = [
 TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist. Tailor the provided LaTeX resume to the job description.
 
 ━━ PAGE CONSTRAINT — ABSOLUTE ━━
-The compiled PDF must be exactly 1 page. Enforce this with these hard limits:
+The compiled PDF must be exactly 1 page. Apply ALL cuts below before returning:
 
-  Work experience bullets per role:
-    • Most recent role:   3–4 bullets (based on JD alignment)
-    • Second role:        3–4 bullets (based on JD alignment)
-    • Oldest role:        3–4 bullets (based on JD alignment)
-  Every bullet across ALL roles: maximum 25 words — count every word, split any bullet exceeding this limit
-  Projects: keep top 2 most JD-relevant, 2 bullets each (add a 3rd only to cover a critical JD gap)
-  Summary: exactly 3 sentences, 4 lines maximum
+  Work experience bullets per role (HARD CAPS — no exceptions):
+    • Most recent role:  3 bullets max
+    • Second role:       3 bullets max
+    • Oldest role:       2 bullets max
+  Every bullet: maximum 20 words — count every word; truncate any that exceed this
+  Projects: top 2 most JD-relevant only, 2 bullets each, max 20 words per bullet
+  Summary: exactly 2 sentences, max 3 lines total
+  Skills: max 4 categories, max 6 tools each — remove entire categories not in JD
 
 ━━ BULLET STRUCTURE ━━
 Every bullet must follow: [OUTCOME + METRIC] by [HOW YOU DID IT]
-✓ "Cut retrieval latency to 400ms across 100K+ documents by deploying RAG with LangChain and Pinecone"
+✓ "Cut retrieval latency to 400ms across 100K docs by deploying RAG with LangChain and Pinecone"
 ✗ "Developed a RAG pipeline that improved retrieval latency by deploying LangChain"
 
 Rules:
   • Outcome-first, method-second — always
-  • Include at least one metric per bullet (%, ms, scale, cost, accuracy, users)
-  • Show specific tools, architecture decisions, and trade-offs
-  • 2–3 bullets per role must reference a concrete decision or constraint
+  • At least one hard metric per bullet (%, ms, $, scale, accuracy)
+  • Show specific tools — no generic verbs without a named technology
+
+━━ LAYOUT ANTI-PATTERNS — NEVER DO ANY OF THESE ━━
+  • NEVER use negative \\vspace (e.g. \\vspace{-11pt}, \\vspace{-8pt}) anywhere
+  • NEVER put product names, domain labels, or pipe-separated extras on the company line
+    ✗  IpserLab LLC, Fort Worth, TX $|$ \\textit{Product: Smart Pantry} \\vspace{-11pt} \\\\
+    ✓  IpserLab LLC \\hfill Fort Worth, TX
+  • NEVER use \\vspace before \\begin{itemize} — it causes text overlap
+  • Company line format EXACTLY: CompanyName \\hfill City, ST
+    - company name only (no product, no domain, no $|$ separators)
+    - location only (city + state abbreviation, nothing else)
+  • If the input template has \\vspace{-...} between a company line and \\begin{itemize},
+    DELETE that \\vspace in your output — replace it with nothing
 
 ━━ SUMMARY RULES ━━
   Sentence 1: Role title matching JD + years + top 2 domains
-  Sentence 2: 2–3 hard metrics from most relevant experience
-  Sentence 3: Key technical stack + what you deliver for stakeholders
+  Sentence 2: 2–3 hard metrics from most relevant experience + key tech stack
 
 ━━ CONTENT RULES ━━
   1. NEVER fabricate experience, tools, metrics, or employers not in the original
@@ -175,14 +186,12 @@ Rules:
 
 ━━ SKILLS SECTION ━━
   • Only list skills from the JD OR skills demonstrated in the bullets above
-  • Maximum 5 categories, 8 tools each
-  • Note JD equivalents in brackets where applicable: "PostgreSQL (Redshift-compatible)"
+  • Maximum 4 categories, 6 tools each
+  • Remove entire skill categories absent from the JD
 
 ━━ BANNED PHRASES (sound immediately AI-written) ━━
   leveraged · utilized · spearheaded · seamlessly · passionate about
-  proven ability to · end-to-end (max once total) · cross-functional (max once total)
-  owned (max once) · comfortable operating at the intersection of
-  feedback-driven development cycles · generalizing insights into scalable capabilities
+  proven ability to · end-to-end (max once) · cross-functional (max once)
 
 ━━ LATEX RULES ━━
   • Return ONLY the complete .tex file — no explanations, no markdown code fences
@@ -190,7 +199,7 @@ Rules:
   • Escape bare special chars: % → \\%, & → \\&
   • Never truncate — return the full file
 
-The output is piped directly to pdflatex. Any syntax error fails the quality gate. A PDF exceeding 1 page triggers an automatic retry."""
+The output is piped directly to pdflatex. Any LaTeX error or PDF exceeding 1 page triggers an automatic retry."""
 
 COLD_EMAIL_SYSTEM_PROMPT = """You are a professional email copywriter specialising in job application outreach.
 Write a cold email from a job applicant to a recruiter/hiring manager.

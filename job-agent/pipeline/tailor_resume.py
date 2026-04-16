@@ -90,14 +90,16 @@ def _build_fix_compile_prompt(broken_tex: str, error_log: str) -> str:
 def _build_trim_prompt(long_tex: str, page_count: int) -> str:
     return (
         f"This resume compiled to {page_count} pages. It MUST fit on exactly 1 page.\n\n"
-        f"Apply ALL of these cuts in order until it fits:\n"
-        f"1. Enforce hard bullet limits: most recent role 4 bullets, others 3 bullets each\n"
-        f"2. Enforce 25-word maximum per bullet — split or cut any bullet that exceeds this\n"
-        f"3. Reduce project count to top 2 most relevant, 2 bullets each\n"
-        f"4. Shrink summary to exactly 3 sentences\n"
-        f"5. Tighten LaTeX spacing: reduce \\vspace and \\itemsep values by 20–30\\%\n\n"
+        f"Apply ALL of these cuts IN ORDER — do not stop early:\n"
+        f"1. Most recent role: max 3 bullets. Second role: max 3 bullets. Oldest role: max 2 bullets.\n"
+        f"2. Every bullet: hard cap of 20 words — count and truncate any that exceed this.\n"
+        f"3. Projects: keep top 2 most JD-relevant only, 2 bullets each, 20 words max per bullet.\n"
+        f"4. Summary: exactly 2 sentences, 3 lines max.\n"
+        f"5. Skills: max 4 categories, 6 tools each — drop entire categories not needed.\n"
+        f"6. Remove ALL negative \\\\vspace values (e.g. \\\\vspace{{-11pt}}) — they cause text overlap.\n"
+        f"7. Remove product names and domain labels from company lines — company name + location only.\n\n"
         f"Do NOT remove any job roles, companies, or dates.\n"
-        f"Return the complete corrected .tex file and nothing else.\n\n"
+        f"Return ONLY the complete corrected .tex file — no explanations.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
     )
 
