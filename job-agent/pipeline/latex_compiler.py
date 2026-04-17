@@ -186,6 +186,22 @@ def render_preview(pdf_path: str, dpi: int = 150) -> str:
         return ""
 
 
+def adjust_margin(tex_content: str, margin_in: float) -> str:
+    """
+    Replace the \\geometry margin value in a .tex file.
+
+    Clamps to [0.20, 0.28] inches. Used when content overflows 1 page
+    and we want to gain space by reducing margins before asking Claude to trim.
+    """
+    margin_in = max(0.20, min(0.28, round(margin_in, 2)))
+    return re.sub(
+        r"(\\usepackage\[)[^\]]*?(]{geometry})",
+        rf"\g<1>a4paper,margin={margin_in}in\g<2>",
+        tex_content,
+    )
+
+
+
 def sanitise_latex(tex_content: str) -> str:
     """
     LaTeX sanitiser applied before every pdflatex call.

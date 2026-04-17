@@ -9,6 +9,7 @@ Usage:
     pdf_path = tailor_resume(job_id=42, job_dict=job, jd_text=jd)
 """
 
+import base64
 import os
 import re
 import logging
@@ -24,7 +25,10 @@ from config import (
     MAX_RETRIES,
     MAX_PAGE_RETRIES,
 )
-from pipeline.latex_compiler import compile_tex, get_page_count, get_fill_percentage, sanitise_latex
+from pipeline.latex_compiler import (
+    compile_tex, get_page_count, get_fill_percentage,
+    sanitise_latex, adjust_margin, render_preview,
+)
 from pipeline.ats_scorer import score_resume, get_missing_keywords
 
 logger = logging.getLogger(__name__)
@@ -69,11 +73,28 @@ def _extract_tex(response_text: str) -> str:
     return text
 
 
-def _build_tailoring_prompt(base_tex: str, jd_text: str) -> str:
+_CERT_KEYWORDS = frozenset([
+    "certif", "aws certified", "azure certified", "gcp certified",
+    "oracle certified", "comptia", "cissp", "pmp", "cpa", "cfa",
+])
+
+def _jd_mentions_certifications(jd_text: str) -> bool:
+    jd_lower = jd_text.lower()
+    return any(kw in jd_lower for kw in _CERT_KEYWORDS)
+
+
+def _build_tailoring_prompt(base_tex: str, jd_text: str, include_certs: bool = False) -> str:
+    cert_instruction = (
+        "The JD explicitly mentions certifications — include the Certifications section at the end."
+        if include_certs else
+        "DO NOT include a Certifications section — the JD does not require it."
+    )
     return (
         f"Tailor this LaTeX resume for the following job description.\n\n"
         f"=== JOB DESCRIPTION ===\n{jd_text[:5000]}\n\n"
         f"=== CURRENT RESUME (.tex) ===\n{base_tex}\n\n"
+        f"CERTIFICATIONS RULE: {cert_instruction}\n"
+        f"PUBLICATIONS RULE: DO NOT include a Publications section — omit it entirely.\n\n"
         f"Return ONLY the complete tailored .tex file — no explanations."
     )
 
@@ -135,6 +156,62 @@ def _build_ats_retry_prompt(current_tex: str, missing_keywords: list[str], score
     )
 
 
+def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[bool, str]:
+    """
+    Use Claude Haiku vision to verify the resume is exactly 1 full page.
+
+    Returns (is_good, feedback) where is_good=True means the page looks correct.
+    Falls back to (True, "no preview") if render_preview is unavailable.
+    """
+    jpeg_path = render_preview(pdf_path)
+    if not jpeg_path or not os.path.exists(jpeg_path):
+        logger.warning("_claude_verify_page: no preview available — assuming OK")
+        return True, "no preview"
+
+    try:
+        with open(jpeg_path, "rb") as f:
+            image_data = base64.standard_b64encode(f.read()).decode()
+
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_data,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "This is a rendered resume page. Answer with one word only:\n"
+                            "- FULL: content reaches within ~5% of the bottom margin, no overflow\n"
+                            "- SHORT: large whitespace gap at the bottom (more than 10% of page empty)\n"
+                            "- OVERFLOW: content is cut off or text runs off the page\n"
+                            "Reply with exactly one word: FULL, SHORT, or OVERFLOW"
+                        ),
+                    },
+                ],
+            }],
+        )
+        verdict = message.content[0].text.strip().upper().split()[0]
+        logger.info("Claude page verify: %s", verdict)
+        return verdict == "FULL", verdict
+    except Exception as e:
+        logger.warning("Claude page verify failed: %s — assuming OK", e)
+        return True, "error"
+    finally:
+        try:
+            os.remove(jpeg_path)
+        except OSError:
+            pass
+
+
 def _call_claude(
     prompt: str,
     client: anthropic.Anthropic,
@@ -185,10 +262,14 @@ def tailor_resume(
     os.makedirs(RESUMES_DIR, exist_ok=True)
 
     base_tex = load_base_resume()
-    logger.info("Starting tailoring for job #%d: %s at %s", job_id, role, company)
+    include_certs = _jd_mentions_certifications(jd_text)
+    logger.info(
+        "Starting tailoring for job #%d: %s at %s (certs: %s)",
+        job_id, role, company, include_certs,
+    )
 
     # ── Step 1: Initial tailoring call ───────────────────────────────────────
-    prompt = _build_tailoring_prompt(base_tex, jd_text)
+    prompt = _build_tailoring_prompt(base_tex, jd_text, include_certs)
     tex_content = _extract_tex(_call_claude(prompt, client))
     tex_content = sanitise_latex(tex_content)
 
@@ -212,21 +293,34 @@ def tailor_resume(
 
     logger.info("PDF compiled: %s", pdf_path)
 
-    # ── Step 3: Page count gate ───────────────────────────────────────────────
+    # ── Step 3: Page count gate — content trim then margin shrink ────────────
+    # Pass 1: ask Claude to trim content (up to MAX_PAGE_RETRIES times)
     for page_attempt in range(MAX_PAGE_RETRIES + 1):
         pages = get_page_count(pdf_path)
-
-        if pages == 1:
-            break
-        if pages == -1:
-            logger.warning("Could not determine page count — skipping page gate")
+        if pages == 1 or pages == -1:
             break
 
         if page_attempt >= MAX_PAGE_RETRIES:
-            logger.warning(
-                "Job #%d: page count %d after %d retries — flagging for manual review",
-                job_id, pages, MAX_PAGE_RETRIES,
-            )
+            # Pass 2: content trim exhausted — try shrinking margins (0.25 → 0.22 → 0.20)
+            margin = 0.25
+            while margin >= 0.20:
+                logger.warning(
+                    "Job #%d: still %d pages — reducing margin to %.2fin",
+                    job_id, pages, margin,
+                )
+                tex_content = adjust_margin(tex_content, margin)
+                success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+                if success:
+                    pdf_path = new_pdf
+                    if get_page_count(pdf_path) == 1:
+                        logger.info("Margin %.2fin fixed overflow", margin)
+                        break
+                margin = round(margin - 0.03, 2)
+            else:
+                logger.warning(
+                    "Job #%d: could not fit on 1 page even at min margins — flagging",
+                    job_id,
+                )
             break
 
         logger.warning("Resume is %d pages — asking Claude to trim", pages)
@@ -234,36 +328,47 @@ def tailor_resume(
         tex_content = _extract_tex(_call_claude(trim_prompt, client))
         tex_content = sanitise_latex(tex_content)
 
-        # Recompile after trim
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after trim: {error_log}")
 
-    # ── Step 3b: Page fill check — expand if resume is under-full ────────────
-    for fill_attempt in range(2):  # at most 1 expand pass
-        fill = get_fill_percentage(pdf_path)
-        if fill >= 0.85:
-            logger.info("Page fill %.0f%% — OK", fill * 100)
+    # ── Step 3b: Claude visual verify — page must be FULL ────────────────────
+    # Up to 2 passes: expand if SHORT, trim if OVERFLOW
+    for visual_attempt in range(2):
+        is_good, verdict = _claude_verify_page(pdf_path, client)
+        if is_good:
+            logger.info("Claude page verify: FULL — approved")
             break
 
-        logger.warning(
-            "Job #%d: page only %.0f%% full — asking Claude to expand (attempt %d)",
-            job_id, fill * 100, fill_attempt + 1,
-        )
-        expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
-        tex_content = _extract_tex(_call_claude(expand_prompt, client))
-        tex_content = sanitise_latex(tex_content)
+        if verdict == "SHORT":
+            fill = get_fill_percentage(pdf_path)
+            logger.warning(
+                "Job #%d: Claude says SHORT (fill ~%.0f%%) — expanding (attempt %d)",
+                job_id, fill * 100, visual_attempt + 1,
+            )
+            expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
+            tex_content = _extract_tex(_call_claude(expand_prompt, client))
+            tex_content = sanitise_latex(tex_content)
+            success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+            if success and get_page_count(new_pdf) == 1:
+                pdf_path = new_pdf
+            else:
+                logger.warning("Expand recompile failed/overflowed — keeping previous")
+                break
 
-        success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
-        if not success:
-            logger.warning("Expand recompile failed — keeping under-filled version")
-            break
-
-        # Verify we didn't overflow to 2 pages after expanding
-        if get_page_count(new_pdf) == 1:
-            pdf_path = new_pdf
+        elif verdict == "OVERFLOW":
+            logger.warning(
+                "Job #%d: Claude says OVERFLOW — trimming margin (attempt %d)",
+                job_id, visual_attempt + 1,
+            )
+            # Try one margin step before declaring failure
+            tex_content = adjust_margin(tex_content, 0.22)
+            success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+            if success:
+                pdf_path = new_pdf
+            else:
+                break
         else:
-            logger.warning("Expansion overflowed to 2 pages — keeping previous version")
             break
 
     # ── Step 4: ATS keyword score gate ───────────────────────────────────────

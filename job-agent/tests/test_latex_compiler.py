@@ -17,6 +17,7 @@ from pipeline.latex_compiler import (
     get_page_count,
     render_preview,
     sanitise_latex,
+    adjust_margin,
     _extract_errors,
     PDFLATEX,
     PDFINFO,
@@ -81,6 +82,28 @@ class TestSanitiseLatex(unittest.TestCase):
         result = sanitise_latex(tex)
         self.assertNotIn("-11pt", result)
         self.assertNotIn("-8pt", result)
+
+
+class TestAdjustMargin(unittest.TestCase):
+
+    BASE_TEX = r"\usepackage[a4paper,margin=0.28in]{geometry}"
+
+    def test_replaces_margin_value(self):
+        result = adjust_margin(self.BASE_TEX, 0.22)
+        self.assertIn("margin=0.22in", result)
+        self.assertNotIn("margin=0.28in", result)
+
+    def test_clamps_below_minimum(self):
+        result = adjust_margin(self.BASE_TEX, 0.10)
+        self.assertIn("margin=0.2in", result)
+
+    def test_clamps_above_maximum(self):
+        result = adjust_margin(self.BASE_TEX, 0.50)
+        self.assertIn("margin=0.28in", result)
+
+    def test_preserves_a4paper(self):
+        result = adjust_margin(self.BASE_TEX, 0.22)
+        self.assertIn("a4paper", result)
 
 
 class TestExtractErrors(unittest.TestCase):
