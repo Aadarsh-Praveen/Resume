@@ -53,9 +53,11 @@ class TestIsRelevant(unittest.TestCase):
     def test_accountant_not_relevant(self):
         self.assertFalse(_is_relevant("Accountant"))
 
-    def test_title_only_matching(self):
-        # Description is no longer used — only the title is checked
-        self.assertFalse(_is_relevant("Research Engineer"))
+    def test_description_broadens_match(self):
+        self.assertTrue(_is_relevant("Research Engineer", description="building machine learning models"))
+
+    def test_no_match_in_title_or_description(self):
+        self.assertFalse(_is_relevant("Research Engineer", description="financial reporting"))
 
 
 class TestExtractText(unittest.TestCase):

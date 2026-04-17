@@ -104,6 +104,15 @@ LEVER_COMPANIES = {
     "airtable": "Airtable",
     "benchling": "Benchling",
     "scale": "Scale AI (Lever)",
+    # Additional ML/AI companies on Lever
+    "huggingface": "HuggingFace",
+    "mistral": "Mistral AI",
+    "anyscale": "Anyscale",
+    "weights-biases": "Weights & Biases",
+    "replit": "Replit",
+    "zapier": "Zapier",
+    "carta": "Carta",
+    "nuro": "Nuro",
 }
 
 ASHBY_COMPANIES = {
@@ -119,6 +128,14 @@ ASHBY_COMPANIES = {
     "mercury": "Mercury",
     "modal-labs": "Modal",
     "qdrant": "Qdrant",
+    # Additional ML/AI companies on Ashby
+    "anthropic": "Anthropic (Ashby)",
+    "openai": "OpenAI (Ashby)",
+    "elevenlabs": "ElevenLabs",
+    "midjourney": "Midjourney",
+    "pika": "Pika Labs",
+    "characterai": "Character.AI",
+    "inflection-ai": "Inflection AI",
 }
 
 BAMBOOHR_COMPANIES = {

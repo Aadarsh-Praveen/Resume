@@ -20,13 +20,16 @@ from config import INDEED_QUERIES, INDEED_MAX_RESULTS, ROLE_KEYWORDS, EXCLUDE_KE
 logger = logging.getLogger(__name__)
 
 INDEED_RSS_BASE = "https://www.indeed.com/rss"
+HIMALAYAS_API = "https://himalayas.app/jobs/api"
 REQUEST_TIMEOUT = 15
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -130,21 +133,74 @@ def _parse_entry(entry: dict) -> Optional[dict]:
         return None
 
 
+def _fetch_himalayas() -> list[dict]:
+    """
+    Himalayas.app free job API — no key required.
+    Returns remote DS/ML/AI jobs posted recently.
+    """
+    jobs = []
+    seen: set[str] = set()
+    try:
+        resp = requests.get(
+            HIMALAYAS_API,
+            params={"limit": 100},
+            headers=HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            logger.warning("Himalayas API: HTTP %d — skipping", resp.status_code)
+            return []
+        data = resp.json()
+        for job in data.get("jobs", []):
+            title = (job.get("title") or "").strip()
+            url = job.get("applicationLink") or job.get("url", "")
+            company = (job.get("companyName") or job.get("company", {}).get("name", "")).strip()
+            description = job.get("description", "") or ""
+            location = job.get("locationRestrictions") or "Remote"
+            posted = job.get("publishedAt", "")
+
+            if not title or not url or url in seen:
+                continue
+            if not _is_relevant(title, description):
+                continue
+
+            seen.add(url)
+            jobs.append({
+                "title": title,
+                "company": company or "Unknown",
+                "url": url,
+                "jd_text": _strip_html(description)[:3000],
+                "source": "himalayas",
+                "posted_date": posted,
+                "location": str(location),
+            })
+    except Exception as e:
+        logger.warning("Himalayas fetch failed: %s", e)
+    logger.info("Himalayas: %d relevant jobs", len(jobs))
+    return jobs
+
+
 def fetch_indeed_jobs(queries: Optional[list] = None) -> list[dict]:
     """
-    Fetch jobs from Indeed RSS feeds for all configured queries.
+    Fetch jobs from Indeed RSS feeds + Himalayas fallback.
 
-    Args:
-        queries: List of dicts with 'q' and 'l' keys. Defaults to config.INDEED_QUERIES.
-
-    Returns:
-        List of job dicts (deduplicated by URL within this batch).
+    Uses a persistent session with cookies to reduce Indeed's 403 rate.
+    Falls back to Himalayas free API for additional coverage when Indeed blocks.
     """
     if queries is None:
         queries = INDEED_QUERIES
 
     seen_urls: set[str] = set()
     jobs: list[dict] = []
+    indeed_blocked_count = 0
+
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    # Warm up the session with a browser-like visit to set cookies
+    try:
+        session.get("https://www.indeed.com", timeout=REQUEST_TIMEOUT)
+    except Exception:
+        pass
 
     for query_params in queries:
         q = query_params.get("q", "data scientist")
@@ -153,12 +209,12 @@ def fetch_indeed_jobs(queries: Optional[list] = None) -> list[dict]:
 
         logger.info("Polling Indeed RSS: %s", url)
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = session.get(url, timeout=REQUEST_TIMEOUT)
             if resp.status_code == 403:
                 logger.warning(
-                    "Indeed RSS blocked (403) for query '%s' — "
-                    "Indeed actively rate-limits RSS scrapers. Skipping.", q
+                    "Indeed RSS blocked (403) for query '%s' — skipping", q
                 )
+                indeed_blocked_count += 1
                 continue
             resp.raise_for_status()
             entries = _parse_rss_xml(resp.text)
@@ -172,10 +228,21 @@ def fetch_indeed_jobs(queries: Optional[list] = None) -> list[dict]:
 
         except requests.HTTPError as e:
             logger.warning("Indeed RSS HTTP error for query '%s': %s — skipping", q, e)
+            indeed_blocked_count += 1
         except Exception as e:
             logger.warning("Indeed RSS fetch failed for query '%s': %s — skipping", q, e)
 
-        time.sleep(1)  # polite delay between requests
+        time.sleep(1)
 
     logger.info("Indeed RSS: %d relevant jobs collected", len(jobs))
+
+    # If Indeed is fully blocked, pull from Himalayas for broad remote coverage
+    if indeed_blocked_count == len(queries):
+        logger.info("Indeed fully blocked — trying Himalayas as fallback")
+        himalayas_jobs = _fetch_himalayas()
+        for job in himalayas_jobs:
+            if job["url"] not in seen_urls:
+                seen_urls.add(job["url"])
+                jobs.append(job)
+
     return jobs

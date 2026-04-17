@@ -21,11 +21,11 @@ BASE_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 REQUEST_TIMEOUT = 15
 
 
-def _is_relevant(title: str) -> bool:
-    t = title.lower()
-    if not any(kw in t for kw in ROLE_KEYWORDS):
+def _is_relevant(title: str, department: str = "", description: str = "") -> bool:
+    combined = (title + " " + department + " " + description[:500]).lower()
+    if not any(kw in combined for kw in ROLE_KEYWORDS):
         return False
-    if any(kw in t for kw in EXCLUDE_KEYWORDS):
+    if any(kw in title.lower() for kw in EXCLUDE_KEYWORDS):
         return False
     return True
 
@@ -68,7 +68,7 @@ def _fetch_company_jobs(slug: str, company_name: str) -> list[dict]:
 
         if not title or not job_url:
             continue
-        if not _is_relevant(title):
+        if not _is_relevant(title, team, description):
             continue
 
         location = posting.get("locationName") or posting.get("location", "")

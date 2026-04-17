@@ -293,6 +293,7 @@ class TestGetCsrfSession(unittest.TestCase):
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.text = ""
+        mock_resp.headers.get.return_value = None   # no wd-X-CSRF-Token header
         mock_session.get.return_value = mock_resp
         mock_session.cookies.get.return_value = None
         mock_session_cls.return_value = mock_session
@@ -306,6 +307,7 @@ class TestGetCsrfSession(unittest.TestCase):
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.text = ""
+        mock_resp.headers.get.return_value = None   # no wd-X-CSRF-Token header
         mock_session.get.return_value = mock_resp
         # Return token for PLAY_SESSION cookie
         mock_session.cookies.get.side_effect = lambda name: "test-csrf-token" if name == "PLAY_SESSION" else None
@@ -319,12 +321,26 @@ class TestGetCsrfSession(unittest.TestCase):
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.text = 'var config = {"csrfToken": "html-csrf-token", "other": true};'
+        mock_resp.headers.get.return_value = None   # no wd-X-CSRF-Token header
         mock_session.get.return_value = mock_resp
         mock_session.cookies.get.return_value = None
         mock_session_cls.return_value = mock_session
 
         session, token = _get_csrf_session("salesforce", "External_Career_Site")
         self.assertEqual(token, "html-csrf-token")
+
+    @patch("sources.workday_api.requests.Session")
+    def test_extracts_token_from_response_header(self, mock_session_cls):
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = ""
+        mock_resp.headers.get.side_effect = lambda h, d=None: "header-csrf-token" if "csrf" in h.lower() else None
+        mock_session.get.return_value = mock_resp
+        mock_session.cookies.get.return_value = None
+        mock_session_cls.return_value = mock_session
+
+        session, token = _get_csrf_session("apple", "apple-jobs")
+        self.assertEqual(token, "header-csrf-token")
 
     @patch("sources.workday_api.requests.Session")
     def test_falls_back_to_uuid_on_network_error(self, mock_session_cls):
