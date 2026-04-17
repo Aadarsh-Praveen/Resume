@@ -159,47 +159,47 @@ def run_collection_cycle() -> int:
 
     all_new_jobs: list[dict] = []
 
-    # Source 1: Indeed RSS
+    # Source 1: LinkedIn direct search (guest API — no login required)
     try:
-        jobs = fetch_indeed_jobs()
+        jobs = fetch_linkedin_jobs()
         all_new_jobs.extend(jobs)
     except Exception as e:
-        logger.error("Indeed RSS failed: %s", e)
+        logger.error("LinkedIn direct search failed: %s", e)
 
-    # Source 2: Greenhouse
-    try:
-        jobs = fetch_greenhouse_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Greenhouse API failed: %s", e)
-
-    # Source 3: Lever
-    try:
-        jobs = fetch_lever_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Lever API failed: %s", e)
-
-    # Source 4: Ashby
-    try:
-        jobs = fetch_ashby_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Ashby API failed: %s", e)
-
-    # Source 5: LinkedIn email alerts (Gmail)
+    # Source 2: LinkedIn email alerts (Gmail)
     try:
         jobs = watch_linkedin_alerts()
         all_new_jobs.extend(jobs)
     except Exception as e:
         logger.warning("Gmail/LinkedIn alerts failed (check credentials): %s", e)
 
-    # Source 6: LinkedIn direct search (guest API — no login required)
+    # Source 3: Indeed RSS
     try:
-        jobs = fetch_linkedin_jobs()
+        jobs = fetch_indeed_jobs()
         all_new_jobs.extend(jobs)
     except Exception as e:
-        logger.error("LinkedIn direct search failed: %s", e)
+        logger.error("Indeed RSS failed: %s", e)
+
+    # Source 4: Greenhouse
+    try:
+        jobs = fetch_greenhouse_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("Greenhouse API failed: %s", e)
+
+    # Source 5: Lever
+    try:
+        jobs = fetch_lever_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("Lever API failed: %s", e)
+
+    # Source 6: Ashby
+    try:
+        jobs = fetch_ashby_jobs()
+        all_new_jobs.extend(jobs)
+    except Exception as e:
+        logger.error("Ashby API failed: %s", e)
 
     # Source 7: Workday JSON API (NVIDIA, Tesla, Apple, Salesforce, AMD)
     try:

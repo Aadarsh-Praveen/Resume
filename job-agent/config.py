@@ -179,13 +179,13 @@ EXCLUDE_KEYWORDS = [
 # ── Resume tailoring Claude prompt ───────────────────────────────────────────
 TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist. Tailor the provided LaTeX resume to the job description.
 
-━━ SECTIONS TO INCLUDE (EXACTLY THESE, NO OTHERS) ━━
+━━ SECTIONS TO INCLUDE — IN THIS EXACT ORDER ━━
   1. Header (name + contact)
   2. Summary
-  3. Education
-  4. Skills
-  5. Work Experience
-  6. Projects
+  3. Skills
+  4. Work Experience
+  5. Projects
+  6. Education  ← always last
   DO NOT include Certifications, Publications, or any other section.
   Certifications and Publications overflow the 1-page budget — omit them entirely.
 
