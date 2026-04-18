@@ -60,7 +60,7 @@ LINKEDIN_QUERIES = [
 # ── Target companies for Greenhouse / Lever / Ashby APIs ─────────────────────
 # Format: { "slug": {"ats": "greenhouse|lever|ashby|bamboohr", "name": "Display Name"} }
 GREENHOUSE_COMPANIES = {
-    # ── Original 10 ──────────────────────────────────────────────────────────
+    # ── Core AI/ML product companies ─────────────────────────────────────────
     "stripe": "Stripe",
     "airbnb": "Airbnb",
     "coinbase": "Coinbase",
@@ -71,7 +71,6 @@ GREENHOUSE_COMPANIES = {
     "databricks": "Databricks",
     "snowflake": "Snowflake",
     "scale-ai": "Scale AI",
-    # ── Additional top DS/ML companies ───────────────────────────────────────
     "doordash": "DoorDash",
     "instacart": "Instacart",
     "pinterest": "Pinterest",
@@ -92,6 +91,63 @@ GREENHOUSE_COMPANIES = {
     "rippling": "Rippling",
     "coupang": "Coupang",
     "palantir": "Palantir",
+    # ── Big tech / high DS-ML hiring ─────────────────────────────────────────
+    "spotify": "Spotify",
+    "uber": "Uber",
+    "dropbox": "Dropbox",
+    "snap": "Snap",
+    "discord": "Discord",
+    "roblox": "Roblox",
+    "box": "Box",
+    "zoom": "Zoom",
+    "okta": "Okta",
+    "hashicorp": "HashiCorp",
+    "pagerduty": "PagerDuty",
+    "elastic": "Elastic",
+    "fastly": "Fastly",
+    "intercom": "Intercom",
+    "miro": "Miro",
+    "loom": "Loom",
+    "clickup": "ClickUp",
+    "procore": "Procore",
+    "samsara": "Samsara",
+    "flexport": "Flexport",
+    "navan": "Navan",
+    "toast": "Toast",
+    "adyen": "Adyen",
+    "servicenow": "ServiceNow",
+    "postman": "Postman",
+    "algolia": "Algolia",
+    "cloudinary": "Cloudinary",
+    "contentful": "Contentful",
+    "celonis": "Celonis",
+    "collibra": "Collibra",
+    # ── Data/ML infrastructure ────────────────────────────────────────────────
+    "datadog": "Datadog",
+    "confluent": "Confluent",
+    "dbt-labs": "dbt Labs",
+    "fivetran": "Fivetran",
+    "labelbox": "Labelbox",
+    "roboflow": "Roboflow",
+    "amplitude": "Amplitude",
+    "mixpanel": "Mixpanel",
+    "launchdarkly": "LaunchDarkly",
+    "statsig": "Statsig",
+    "glean": "Glean",
+    "moveworks": "Moveworks",
+    # ── Security / infra ──────────────────────────────────────────────────────
+    "snyk": "Snyk",
+    "lacework": "Lacework",
+    "wiz-inc": "Wiz",
+    "rubrik": "Rubrik",
+    # ── AI / robotics / autonomy ──────────────────────────────────────────────
+    "appliedintuition": "Applied Intuition",
+    "shieldai": "Shield AI",
+    "covariant": "Covariant",
+    "recursionpharma": "Recursion Pharmaceuticals",
+    "tempus": "Tempus",
+    "insitro": "Insitro",
+    "skild-ai": "Skild AI",
 }
 
 LEVER_COMPANIES = {
@@ -104,6 +160,23 @@ LEVER_COMPANIES = {
     "airtable": "Airtable",
     "benchling": "Benchling",
     "scale": "Scale AI (Lever)",
+    "huggingface": "HuggingFace",
+    "mistral": "Mistral AI",
+    "anyscale": "Anyscale",
+    "weights-biases": "Weights & Biases",
+    "replit": "Replit",
+    "zapier": "Zapier",
+    "carta": "Carta",
+    "nuro": "Nuro",
+    # ── Additional ───────────────────────────────────────────────────────────
+    "coursera": "Coursera",
+    "udemy": "Udemy",
+    "headspace": "Headspace",
+    "qualtrics": "Qualtrics",
+    "veeva": "Veeva Systems",
+    "figureai": "Figure AI",
+    "imbue": "Imbue",
+    "adept": "Adept AI",
 }
 
 ASHBY_COMPANIES = {
@@ -119,6 +192,28 @@ ASHBY_COMPANIES = {
     "mercury": "Mercury",
     "modal-labs": "Modal",
     "qdrant": "Qdrant",
+    "elevenlabs": "ElevenLabs",
+    "midjourney": "Midjourney",
+    "pika": "Pika Labs",
+    "characterai": "Character.AI",
+    "inflection-ai": "Inflection AI",
+    # ── Additional AI-first startups on Ashby ────────────────────────────────
+    "physical-intelligence": "Physical Intelligence",
+    "cognition-labs": "Cognition (Devin)",
+    "twelve-labs": "Twelve Labs",
+    "luma-ai": "Luma AI",
+    "magic": "Magic AI",
+    "sierra-ai": "Sierra AI",
+    "poolside": "Poolside",
+    "nabla": "Nabla",
+    "fixie-ai": "Fixie AI",
+    "contextual-ai": "Contextual AI",
+    "imbue": "Imbue (Ashby)",
+    "sakana-ai": "Sakana AI",
+    "xai": "xAI",
+    "moonhub": "Moonhub",
+    "abridge": "Abridge",
+    "laion": "LAION",
 }
 
 BAMBOOHR_COMPANIES = {
