@@ -13,38 +13,36 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 
+# Base schema — only columns that existed from day 1 (safe for any DB age)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    title            TEXT    NOT NULL,
-    company          TEXT    NOT NULL,
-    url              TEXT    NOT NULL,
-    jd_text          TEXT,
-    source           TEXT,
-    posted_date      TEXT,
-    location         TEXT,
-    processed        INTEGER NOT NULL DEFAULT 0,
-    ats_score        REAL,
-    pdf_path         TEXT,
-    status           TEXT    DEFAULT 'pending',
-    cover_letter     TEXT,
-    approval_status  TEXT    DEFAULT 'pending_review',
-    applied_at       TEXT,
-    application_id   TEXT,
-    created_at       TEXT    NOT NULL
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    company     TEXT    NOT NULL,
+    url         TEXT    NOT NULL,
+    jd_text     TEXT,
+    source      TEXT,
+    posted_date TEXT,
+    processed   INTEGER NOT NULL DEFAULT 0,
+    ats_score   REAL,
+    pdf_path    TEXT,
+    status      TEXT    DEFAULT 'pending',
+    created_at  TEXT    NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_company_title    ON jobs (company, title);
-CREATE INDEX IF NOT EXISTS idx_processed        ON jobs (processed);
-CREATE INDEX IF NOT EXISTS idx_approval_status  ON jobs (approval_status);
+CREATE INDEX IF NOT EXISTS idx_company_title ON jobs (company, title);
+CREATE INDEX IF NOT EXISTS idx_processed     ON jobs (processed);
 """
 
+# Each entry is run once; errors (column already exists) are silently ignored.
+# Indexes that depend on migrated columns must come AFTER their ADD COLUMN.
 _MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN location TEXT",
     "ALTER TABLE jobs ADD COLUMN cover_letter TEXT",
     "ALTER TABLE jobs ADD COLUMN approval_status TEXT DEFAULT 'pending_review'",
     "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
     "ALTER TABLE jobs ADD COLUMN application_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
 ]
 
 
@@ -59,14 +57,14 @@ def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(db_path: str = DB_PATH) -> None:
-    """Create the jobs table (and index) if they don't exist, then run migrations."""
+    """Create the jobs table if new, then apply column migrations to existing DBs."""
     with _connect(db_path) as conn:
         conn.executescript(_SCHEMA)
         for migration in _MIGRATIONS:
             try:
                 conn.execute(migration)
             except sqlite3.OperationalError:
-                pass  # column already exists
+                pass  # column/index already exists — skip
     logger.info("Database initialised at %s", db_path)
 
 
