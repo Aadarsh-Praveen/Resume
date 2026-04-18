@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Job Agent{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="sidebar-logo">Job<span>Agent</span></div>
+
+  <div class="nav-label">Menu</div>
+
+  <a href="/" class="nav-item {% if active == 'all' %}active{% endif %}">
+    <span>📋</span> All Jobs
+    <span class="nav-count">{{ stats.total }}</span>
+  </a>
+
+  <a href="/pending" class="nav-item {% if active == 'pending' %}active{% endif %}">
+    <span>⏳</span> Pending Review
+    {% if stats.pending > 0 %}
+    <span class="nav-count warn">{{ stats.pending }}</span>
+    {% endif %}
+  </a>
+
+  <a href="/history" class="nav-item {% if active == 'history' %}active{% endif %}">
+    <span>📜</span> History
+    <span class="nav-count">{{ stats.applied }}</span>
+  </a>
+
+  <div class="sidebar-bottom">
+    <form method="POST" action="/run" class="run-form" style="flex-direction:column;gap:8px;">
+      <select name="mode" class="run-select" style="width:100%;">
+        <option value="full">Full run</option>
+        <option value="collect">Collect only</option>
+        <option value="process">Process only</option>
+      </select>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">
+        ▶ Run Agent
+      </button>
+    </form>
+  </div>
+</nav>
+
+<main class="main">
+  {% block content %}{% endblock %}
+</main>
+
+</body>
+</html>

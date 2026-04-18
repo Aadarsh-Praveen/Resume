@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}All Jobs — Job Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">All Jobs</div>
+    <div class="page-subtitle">Every job found across all sources</div>
+  </div>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total }}</div>
+    <div class="stat-label">Total Found</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:var(--warning)">{{ stats.pending }}</div>
+    <div class="stat-label">Awaiting Review</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:var(--success)">{{ stats.applied }}</div>
+    <div class="stat-label">Applied</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:var(--error)">{{ stats.rejected }}</div>
+    <div class="stat-label">Rejected</div>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <a href="/"                          class="filter-btn {% if not filter %}active{% endif %}">All</a>
+  <a href="/?filter=pending_review"    class="filter-btn {% if filter == 'pending_review' %}active{% endif %}">Pending</a>
+  <a href="/?filter=applied"           class="filter-btn {% if filter == 'applied' %}active{% endif %}">Applied</a>
+  <a href="/?filter=rejected"          class="filter-btn {% if filter == 'rejected' %}active{% endif %}">Rejected</a>
+</div>
+
+{% if jobs %}
+<div class="job-list">
+  {% for job in jobs %}
+  <div class="job-card">
+    <div>
+      <div class="job-title">
+        <a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title }}</a>
+      </div>
+      <div class="job-meta">
+        <span class="job-company">{{ source_icon(job.source) }} {{ job.company }}</span>
+        {% if job.location %}<span>📍 {{ job.location }}</span>{% endif %}
+        {% if job.ats_score %}
+          <span class="ats-score {% if job.ats_score >= 89 %}ats-high{% elif job.ats_score >= 75 %}ats-mid{% else %}ats-low{% endif %}">
+            ATS {{ job.ats_score | int }}
+          </span>
+        {% endif %}
+        <span>{{ job.created_at[:10] }}</span>
+      </div>
+    </div>
+    <div class="card-actions">
+      <span class="badge {{ badge_class(job.approval_status) }}">
+        {{ (job.approval_status or 'new').replace('_', ' ') }}
+      </span>
+      {% if job.pdf_path %}
+      <a href="/job/{{ job.id }}/resume" class="btn btn-ghost btn-sm" target="_blank">PDF</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="pagination">
+  {% if page > 1 %}
+  <a href="/?page={{ page - 1 }}&filter={{ filter }}" class="page-link">← Prev</a>
+  {% endif %}
+  <span class="page-link current">{{ page }}</span>
+  {% if jobs | length == 25 %}
+  <a href="/?page={{ page + 1 }}&filter={{ filter }}" class="page-link">Next →</a>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="empty">
+  <div class="empty-icon">🔍</div>
+  <div class="empty-text">No jobs yet</div>
+  <div class="empty-sub">Click "Run Agent" to start collecting jobs</div>
+</div>
+{% endif %}
+{% endblock %}

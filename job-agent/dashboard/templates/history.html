@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}History — Job Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Application History</div>
+    <div class="page-subtitle">All submitted applications and rejections</div>
+  </div>
+</div>
+
+{% if applied %}
+<div class="section-header">✅ Applied ({{ applied | length }})</div>
+<table class="history-table" style="margin-bottom:32px;">
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Company</th>
+      <th>ATS</th>
+      <th>Applied</th>
+      <th>Confirmation</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in applied %}
+    <tr>
+      <td><strong>{{ job.title }}</strong></td>
+      <td>{{ source_icon(job.source) }} {{ job.company }}</td>
+      <td>
+        {% if job.ats_score %}
+        <span class="ats-score {% if job.ats_score >= 89 %}ats-high{% elif job.ats_score >= 75 %}ats-mid{% else %}ats-low{% endif %}">
+          {{ job.ats_score | int }}
+        </span>
+        {% else %}—{% endif %}
+      </td>
+      <td>{{ (job.applied_at or job.created_at)[:10] }}</td>
+      <td style="color:var(--muted);font-size:12px;">{{ job.application_id or '—' }}</td>
+      <td>
+        <a href="{{ job.url }}" target="_blank" class="btn btn-ghost btn-sm">View</a>
+        {% if job.pdf_path %}
+        <a href="/job/{{ job.id }}/resume" target="_blank" class="btn btn-ghost btn-sm">PDF</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty" style="padding:40px;">
+  <div class="empty-text">No applications yet</div>
+</div>
+{% endif %}
+
+{% if rejected %}
+<div class="section-header">✗ Rejected / Skipped ({{ rejected | length }})</div>
+<table class="history-table">
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Company</th>
+      <th>Date</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in rejected %}
+    <tr>
+      <td>{{ job.title }}</td>
+      <td>{{ job.company }}</td>
+      <td>{{ job.created_at[:10] }}</td>
+      <td><a href="{{ job.url }}" target="_blank" class="btn btn-ghost btn-sm">View</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

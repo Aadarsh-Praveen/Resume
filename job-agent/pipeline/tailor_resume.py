@@ -406,8 +406,44 @@ def tailor_resume(
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry: {error_log}")
 
+    # ── Step 5: Generate cover letter ────────────────────────────────────────
+    cover_letter = _generate_cover_letter(job_dict, jd_text, client)
+
     logger.info(
         "Tailoring complete for job #%d — PDF: %s | ATS: %.1f%%",
         job_id, pdf_path, ats_score,
     )
-    return pdf_path
+    return pdf_path, ats_score, cover_letter
+
+
+def _generate_cover_letter(
+    job_dict: dict,
+    jd_text: str,
+    client: anthropic.Anthropic,
+) -> str:
+    """Generate a 3-paragraph cover letter using the COLD_EMAIL_SYSTEM_PROMPT style."""
+    from config import COLD_EMAIL_SYSTEM_PROMPT
+    import os
+    first = os.getenv("APPLICANT_FIRST_NAME", "")
+    last  = os.getenv("APPLICANT_LAST_NAME", "")
+    name  = f"{first} {last}".strip() or "Aadarsh Praveen"
+
+    prompt = (
+        f"Write a professional cover letter (3 paragraphs, ~200 words) for:\n\n"
+        f"Role: {job_dict.get('title', '')}\n"
+        f"Company: {job_dict.get('company', '')}\n\n"
+        f"Job description:\n{jd_text[:3000]}\n\n"
+        f"Applicant name: {name}\n\n"
+        f"Rules: outcome-first sentences, one hard metric per paragraph, "
+        f"no buzzwords, professional tone. Sign off with just the name."
+    )
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        logger.warning("Cover letter generation failed: %s", e)
+        return ""

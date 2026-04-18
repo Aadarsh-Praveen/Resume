@@ -49,6 +49,7 @@ logger = logging.getLogger("agent")
 from pipeline.dedup import (
     init_db, is_duplicate, insert_job,
     get_unprocessed_jobs, mark_processed, get_todays_processed_jobs,
+    set_cover_letter,
 )
 from pipeline.jd_extractor import extract_jd_text, extract_min_years
 from pipeline.tailor_resume import tailor_resume
@@ -298,7 +299,9 @@ def process_job(job: dict) -> bool:
 
     # ── Tailor resume ─────────────────────────────────────────────────────────
     try:
-        pdf_path = tailor_resume(job_id, job, jd_text)
+        pdf_path, ats_score, cover_letter = tailor_resume(job_id, job, jd_text)
+        if cover_letter:
+            set_cover_letter(job_id, cover_letter, DB_PATH)
     except RuntimeError as e:
         error_msg = str(e)
         logger.error("Tailoring failed for job #%d: %s", job_id, error_msg)
@@ -433,7 +436,7 @@ def run_test_job() -> None:
 
     try:
         from pipeline.tailor_resume import tailor_resume
-        pdf_path = tailor_resume(0, test_job, TEST_JD)
+        pdf_path, _score, _cover = tailor_resume(0, test_job, TEST_JD)
         logger.info("Test job SUCCESS — PDF: %s", pdf_path)
         print(f"\n✓ Test complete! PDF saved to: {pdf_path}")
     except FileNotFoundError as e:
