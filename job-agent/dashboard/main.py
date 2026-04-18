@@ -98,26 +98,22 @@ async def index(request: Request, page: int = 1, filter: str = ""):
     offset = (page - 1) * limit
     jobs   = get_all_jobs(limit=limit, offset=offset, approval_status=filter or None, db_path=DB_PATH)
     stats  = get_stats(DB_PATH)
-    return templates.TemplateResponse("jobs.html", {
-        "request": request,
-        "jobs":    jobs,
-        "stats":   stats,
-        "page":    page,
-        "filter":  filter,
-        "active":  "all",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="jobs.html",
+        context={"jobs": jobs, "stats": stats, "page": page, "filter": filter, "active": "all"},
+    )
 
 
 @app.get("/pending", response_class=HTMLResponse)
 async def pending(request: Request):
     jobs  = get_pending_review_jobs(DB_PATH)
     stats = get_stats(DB_PATH)
-    return templates.TemplateResponse("pending.html", {
-        "request": request,
-        "jobs":    jobs,
-        "stats":   stats,
-        "active":  "pending",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="pending.html",
+        context={"jobs": jobs, "stats": stats, "active": "pending"},
+    )
 
 
 @app.get("/history", response_class=HTMLResponse)
@@ -127,14 +123,11 @@ async def history(request: Request, page: int = 1):
     applied  = get_all_jobs(limit=limit, offset=offset, approval_status="applied",  db_path=DB_PATH)
     rejected = get_all_jobs(limit=20,    offset=0,      approval_status="rejected", db_path=DB_PATH)
     stats    = get_stats(DB_PATH)
-    return templates.TemplateResponse("history.html", {
-        "request":  request,
-        "applied":  applied,
-        "rejected": rejected,
-        "stats":    stats,
-        "page":     page,
-        "active":   "history",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="history.html",
+        context={"applied": applied, "rejected": rejected, "stats": stats, "page": page, "active": "history"},
+    )
 
 
 @app.get("/job/{job_id}/resume")
@@ -155,13 +148,11 @@ async def approve(job_id: int):
     if not job:
         raise HTTPException(404, "Job not found")
 
-    # Try to auto-apply; fall back to just marking approved
     success, application_id = apply_job(job)
     if success:
         mark_applied(job_id, application_id, DB_PATH)
         logger.info("Applied to %s @ %s — ID: %s", job["title"], job["company"], application_id)
     else:
-        # Mark approved but not yet applied (user can open URL manually)
         set_approval(job_id, "approved", DB_PATH)
         logger.warning("Auto-apply failed for job %d — marked approved, needs manual submit", job_id)
 
@@ -183,10 +174,14 @@ async def manual_run(request: Request, mode: str = Form(default="full")):
     import requests as req
 
     if not GITHUB_TOKEN:
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "message": "GITHUB_DASHBOARD_TOKEN not set in .env — cannot trigger workflow.",
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="jobs.html",
+            context={
+                "jobs": [], "stats": get_stats(DB_PATH), "page": 1, "filter": "",
+                "active": "all", "error": "GITHUB_DASHBOARD_TOKEN not set in .env",
+            },
+        )
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/agent.yml/dispatches"
     resp = req.post(
