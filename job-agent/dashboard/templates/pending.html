@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Pending Review — Job Agent{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Pending Review</div>
+    <div class="page-subtitle">Approve to apply, reject to skip</div>
+  </div>
+</div>
+
+{% if jobs %}
+<div class="job-list">
+  {% for job in jobs %}
+  <div class="job-card pending-card" style="display:block;">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;">
+      <div>
+        <div class="job-title">
+          <a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title }}</a>
+        </div>
+        <div class="job-meta">
+          <span class="job-company">{{ source_icon(job.source) }} {{ job.company }}</span>
+          {% if job.location %}<span>📍 {{ job.location }}</span>{% endif %}
+          {% if job.ats_score %}
+            <span class="ats-score {% if job.ats_score >= 89 %}ats-high{% elif job.ats_score >= 75 %}ats-mid{% else %}ats-low{% endif %}">
+              ATS {{ job.ats_score | int }}
+            </span>
+          {% endif %}
+          <span>{{ job.created_at[:10] }}</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        <form method="POST" action="/approve/{{ job.id }}" style="display:inline;"
+              onsubmit="return confirm('Apply to {{ job.title }} at {{ job.company }}?')">
+          <button type="submit" class="btn btn-success">✓ Apply</button>
+        </form>
+        <form method="POST" action="/reject/{{ job.id }}" style="display:inline;">
+          <button type="submit" class="btn btn-danger">✗ Reject</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="pending-details">
+      {% if job.cover_letter %}
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:8px;">
+          Cover Letter
+        </div>
+        <div class="cover-letter-preview">{{ job.cover_letter }}</div>
+      </div>
+      {% else %}
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:8px;">
+          Job Description
+        </div>
+        <div class="cover-letter-preview">{{ (job.jd_text or '')[:600] }}</div>
+      </div>
+      {% endif %}
+
+      <div>
+        {% if job.pdf_path %}
+        <a href="/job/{{ job.id }}/resume" class="resume-link" target="_blank">
+          📄 View Tailored Resume (PDF)
+        </a>
+        {% endif %}
+        <a href="{{ job.url }}" class="resume-link" target="_blank" style="margin-top:10px;">
+          🔗 View Job Posting
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty">
+  <div class="empty-icon">✅</div>
+  <div class="empty-text">Nothing pending</div>
+  <div class="empty-sub">All caught up! New jobs will appear here after the next run.</div>
+</div>
+{% endif %}
+{% endblock %}

@@ -72,23 +72,30 @@ def _get_csrf_session(tenant: str, board: str) -> tuple:
 
     try:
         resp = session.get(careers_url, timeout=REQUEST_TIMEOUT)
-        # Check cookies first
-        for cookie_name in ("PLAY_SESSION", "JSESSIONID", "PLAY_CSRF_TOKEN"):
-            token = session.cookies.get(cookie_name)
-            if token:
-                csrf_token = token
-                break
+        # 1. Check response header — Workday often sends wd-X-CSRF-Token here
+        wd_header = resp.headers.get("wd-X-CSRF-Token") or resp.headers.get("x-wd-csrf-token")
+        if wd_header:
+            csrf_token = wd_header
         else:
-            # Search page HTML for embedded CSRF token
-            html = resp.text
-            for pattern in (
-                r'"csrfToken"\s*:\s*"([^"]+)"',
-                r"var csrfToken\s*=\s*['\"]([^'\"]+)['\"]",
-            ):
-                m = re.search(pattern, html)
-                if m:
-                    csrf_token = m.group(1)
+            # 2. Check cookies (PLAY_CSRF_TOKEN first — most specific)
+            for cookie_name in ("PLAY_CSRF_TOKEN", "PLAY_SESSION", "JSESSIONID"):
+                token = session.cookies.get(cookie_name)
+                if token:
+                    csrf_token = token
                     break
+            else:
+                # 3. Scan page HTML for embedded token
+                html = resp.text
+                for pattern in (
+                    r'"csrfToken"\s*:\s*"([^"]+)"',
+                    r"wdSessionCrumb\s*=\s*['\"]([^'\"]+)['\"]",
+                    r'var\s+csrfToken\s*=\s*[\'"]([^\'"]+)[\'"]',
+                    r'"csrf"\s*:\s*"([^"]+)"',
+                ):
+                    m = re.search(pattern, html)
+                    if m:
+                        csrf_token = m.group(1)
+                        break
     except requests.RequestException as e:
         logger.warning("CSRF session setup failed for %s/%s: %s", tenant, board, e)
 
@@ -121,7 +128,14 @@ def _fetch_company_jobs(
 
     if use_csrf:
         session, csrf_token = _get_csrf_session(tenant, board)
-        post_headers = {**HEADERS, "X-CSRF-Token": csrf_token}
+        careers_url = CAREERS_PAGE_TEMPLATE.format(tenant=tenant, board=board)
+        post_headers = {
+            **HEADERS,
+            "X-CSRF-Token": csrf_token,   # generic CSRF
+            "X-Wd-Crumb": csrf_token,     # Workday-specific header name
+            "Referer": careers_url,
+            "Origin": f"https://{tenant}.wd5.myworkdayjobs.com",
+        }
     else:
         session = None
         post_headers = HEADERS

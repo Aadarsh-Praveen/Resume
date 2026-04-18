@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 
+# Base schema — only columns that existed from day 1 (safe for any DB age)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,8 +31,19 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_company_title ON jobs (company, title);
-CREATE INDEX IF NOT EXISTS idx_processed ON jobs (processed);
+CREATE INDEX IF NOT EXISTS idx_processed     ON jobs (processed);
 """
+
+# Each entry is run once; errors (column already exists) are silently ignored.
+# Indexes that depend on migrated columns must come AFTER their ADD COLUMN.
+_MIGRATIONS = [
+    "ALTER TABLE jobs ADD COLUMN location TEXT",
+    "ALTER TABLE jobs ADD COLUMN cover_letter TEXT",
+    "ALTER TABLE jobs ADD COLUMN approval_status TEXT DEFAULT 'pending_review'",
+    "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
+    "ALTER TABLE jobs ADD COLUMN application_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
+]
 
 
 def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
@@ -45,9 +57,14 @@ def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(db_path: str = DB_PATH) -> None:
-    """Create the jobs table (and index) if they don't exist."""
+    """Create the jobs table if new, then apply column migrations to existing DBs."""
     with _connect(db_path) as conn:
         conn.executescript(_SCHEMA)
+        for migration in _MIGRATIONS:
+            try:
+                conn.execute(migration)
+            except sqlite3.OperationalError:
+                pass  # column/index already exists — skip
     logger.info("Database initialised at %s", db_path)
 
 
@@ -63,19 +80,17 @@ def is_duplicate(company: str, title: str, db_path: str = DB_PATH) -> bool:
 
 def insert_job(job: dict, db_path: str = DB_PATH) -> int:
     """
-    Insert a new job row.  Returns the new row id.
+    Insert a new job row. Returns the new row id.
 
-    Expected keys in job dict:
-        title, company, url, source
-    Optional keys:
-        jd_text, posted_date
+    Expected keys: title, company, url, source
+    Optional keys: jd_text, posted_date, location
     """
     now = datetime.utcnow().isoformat()
     with _connect(db_path) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO jobs (title, company, url, jd_text, source, posted_date, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (title, company, url, jd_text, source, posted_date, location, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.get("title", "").strip(),
@@ -84,6 +99,7 @@ def insert_job(job: dict, db_path: str = DB_PATH) -> int:
                 job.get("jd_text"),
                 job.get("source"),
                 job.get("posted_date"),
+                job.get("location"),
                 now,
             ),
         )
@@ -121,11 +137,95 @@ def mark_processed(
         )
 
 
+def set_cover_letter(job_id: int, cover_letter: str, db_path: str = DB_PATH) -> None:
+    """Store the generated cover letter for a job."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET cover_letter = ? WHERE id = ?",
+            (cover_letter, job_id),
+        )
+
+
+def set_approval(job_id: int, approval_status: str, db_path: str = DB_PATH) -> None:
+    """Set approval_status: 'pending_review' | 'approved' | 'rejected'."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET approval_status = ? WHERE id = ?",
+            (approval_status, job_id),
+        )
+
+
+def mark_applied(
+    job_id: int,
+    application_id: str,
+    db_path: str = DB_PATH,
+) -> None:
+    """Record a successful application submission."""
+    now = datetime.utcnow().isoformat()
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+               SET approval_status = 'applied',
+                   applied_at      = ?,
+                   application_id  = ?
+             WHERE id = ?
+            """,
+            (now, application_id, job_id),
+        )
+
+
 def get_job(job_id: int, db_path: str = DB_PATH) -> Optional[dict]:
     """Fetch a single job by id."""
     with _connect(db_path) as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return dict(row) if row else None
+
+
+def get_pending_review_jobs(db_path: str = DB_PATH) -> list[dict]:
+    """Jobs that have a PDF ready and are awaiting user approval."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM jobs
+             WHERE processed = 1
+               AND pdf_path IS NOT NULL
+               AND approval_status = 'pending_review'
+             ORDER BY created_at DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_all_jobs(
+    limit: int = 50,
+    offset: int = 0,
+    approval_status: Optional[str] = None,
+    db_path: str = DB_PATH,
+) -> list[dict]:
+    """Return jobs ordered by newest first, with optional status filter."""
+    with _connect(db_path) as conn:
+        if approval_status:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE approval_status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (approval_status, limit, offset),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_stats(db_path: str = DB_PATH) -> dict:
+    """Return summary counts for the dashboard header."""
+    with _connect(db_path) as conn:
+        total     = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        pending   = conn.execute("SELECT COUNT(*) FROM jobs WHERE approval_status = 'pending_review' AND processed = 1").fetchone()[0]
+        applied   = conn.execute("SELECT COUNT(*) FROM jobs WHERE approval_status = 'applied'").fetchone()[0]
+        rejected  = conn.execute("SELECT COUNT(*) FROM jobs WHERE approval_status = 'rejected'").fetchone()[0]
+    return {"total": total, "pending": pending, "applied": applied, "rejected": rejected}
 
 
 def get_todays_processed_jobs(db_path: str = DB_PATH) -> list[dict]:
