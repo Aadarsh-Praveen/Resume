@@ -7,22 +7,23 @@ An automated pipeline that finds relevant job postings, tailors your resume for 
 ## What it does
 
 ```
-Job Sources → Deduplicate → Extract JD → Tailor Resume (Claude)
-     → Compile PDF (pdflatex) → ATS Score Check → Find Recruiter
-     → Dashboard Review → Auto-Apply (Greenhouse / Lever)
-     → Telegram Alert
+Job Sources → Deduplicate → Extract JD → LLM Fit Filter (Claude Haiku)
+     → Tailor Resume (Claude Sonnet) → Compile PDF (pdflatex)
+     → ATS Score Check → Find Recruiter → Dashboard Review
+     → Auto-Apply (Greenhouse / Lever) → Telegram Alert
 ```
 
-1. **Collects jobs** from 8 sources: Indeed RSS, Greenhouse (~75 companies), Lever (~25), Ashby (~35), Workday (NVIDIA + Apple/Salesforce/Tesla/AMD via CSRF), LinkedIn email alerts (Gmail), and custom career pages (Google/Meta/Microsoft/Amazon)
+1. **Collects jobs** from 8 sources: Indeed RSS, Greenhouse (~75 companies), Lever (~25), Ashby (~35), Workday (NVIDIA + Apple/Salesforce/Tesla/AMD via CSRF), LinkedIn email alerts (Gmail), custom career pages (Google/Meta/Microsoft/Amazon), and **LinkedIn direct search** (20 queries × 4 pages × 25 results = up to 2,000 raw cards per run)
 2. **Filters** duplicates (SQLite), wrong roles, wrong location, and postings requiring more experience than you have
-3. **Rewrites your resume** using Claude (claude-sonnet-4-6) — emphasising relevant keywords from the JD without fabricating anything
+3. **LLM fit screen** using Claude Haiku — reads the JD and skips jobs with hard blockers (PhD required, active security clearance, 8+ years minimum, team lead mandatory) before spending Sonnet tokens on tailoring
+4. **Rewrites your resume** using Claude (claude-sonnet-4-6) — emphasising relevant keywords from the JD without fabricating anything
 4. **Compiles the PDF** with `pdflatex` and enforces exactly 1 page (margin shrink + Claude Haiku visual validator)
-5. **Scores the PDF** against JD keywords (target: 89–95% ATS match)
-6. **Retries automatically** if the score is too low or the PDF overflows a page
-7. **Finds the recruiter** via Hunter.io and drafts a 3-sentence cold email via Claude
-8. **Dashboard** — review tailored resumes and approve/reject before any application is submitted
-9. **Auto-applies** to Greenhouse and Lever roles on approval
-10. **Sends a Telegram alert** with PDF preview, ATS score, and cold email draft
+6. **Scores the PDF** against JD keywords (target: 89–95% ATS match)
+7. **Retries automatically** if the score is too low or the PDF overflows a page
+8. **Finds the recruiter** via Hunter.io and drafts a 3-sentence cold email via Claude
+9. **Dashboard** — review tailored resumes and approve/reject before any application is submitted
+10. **Auto-applies** to Greenhouse and Lever roles on approval
+11. **Sends a Telegram alert** with PDF preview, ATS score, and cold email draft
 
 ---
 
@@ -134,6 +135,12 @@ YOE_MAX_FILTER = 5        # skip jobs requiring more than 5 yrs
 ATS_SCORE_MIN = 89        # retry if below
 ATS_SCORE_MAX = 95        # flag if above (keyword stuffing risk)
 
+# LinkedIn scraping (20 queries × 4 pages × 25 results = up to 2,000 raw cards/run)
+LINKEDIN_QUERIES    = [...]   # 20 keyword+location combos (data science, ML/AI, remote, top metros)
+LINKEDIN_MAX_PAGES  = 4       # pages per query
+LINKEDIN_PAGE_DELAY = 2.0     # seconds between page requests
+LINKEDIN_QUERY_DELAY = 3.0    # seconds between queries
+
 GREENHOUSE_COMPANIES = { "stripe": "Stripe", "openai": "OpenAI", ... }  # 75+ companies
 LEVER_COMPANIES      = { "netflix": "Netflix", "reddit": "Reddit", ... } # 25+ companies
 ASHBY_COMPANIES      = { "linear": "Linear", "ramp": "Ramp", ... }       # 35+ companies
@@ -176,7 +183,8 @@ resume/
     ├── pipeline/                 ← processing
     │   ├── dedup.py              ← SQLite: jobs + recruiters tables
     │   ├── jd_extractor.py       ← fetch + clean JD text from URL
-    │   ├── tailor_resume.py      ← Claude API: rewrite resume for JD
+    │   ├── fit_filter.py         ← Claude Haiku: skip unqualified jobs before tailoring
+    │   ├── tailor_resume.py      ← Claude Sonnet: rewrite resume for JD
     │   ├── latex_compiler.py     ← pdflatex wrapper + page count
     │   ├── ats_scorer.py         ← keyword extraction + ATS score
     │   ├── quality_gate.py       ← quality checks + retries
