@@ -5,7 +5,7 @@ const App = () => {
   const defaults = window.__TWEAKS__ || { theme: 'light', sidebarCollapsed: false };
   const saved = (() => { try { return JSON.parse(localStorage.getItem('applyflow_state') || '{}'); } catch { return {}; } })();
 
-  const [authed, setAuthed]                 = useStateApp(saved.authed || false);
+  const [authed, setAuthed]                 = useStateApp(true); // local tool — no login needed
   const [page, setPage]                     = useStateApp(saved.page || 'dashboard');
   const [theme, setTheme]                   = useStateApp(saved.theme || defaults.theme);
   const [sidebarCollapsed, setSidebarCollapsed] = useStateApp(saved.sidebarCollapsed ?? defaults.sidebarCollapsed);

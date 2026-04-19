@@ -1,7 +1,9 @@
 // API fetch functions — connects to FastAPI backend at http://localhost:8000
 // Every piece of data in the frontend comes from here; no hardcoded values.
 (function () {
-  const API = 'http://localhost:8000';
+  // Empty string = same origin (when served by FastAPI on port 8000).
+  // Override with full URL only when running frontend separately.
+  const API = window.__API_BASE__ || '';
 
   async function apiFetch(path) {
     const res = await fetch(API + path);

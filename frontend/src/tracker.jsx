@@ -67,7 +67,7 @@ const SortHeader = ({ label, k, sort, setSort }) => {
   );
 };
 
-const Drawer = ({ row, kind, onClose, onDownload, onToggleReview }) => {
+const Drawer = ({ row, kind, onClose, onDownload, onToggleReview, onApprove, onReject }) => {
   if (!row) return null;
   return (
     <>
@@ -149,7 +149,17 @@ const Drawer = ({ row, kind, onClose, onDownload, onToggleReview }) => {
         </div>
         <div className="drawer-foot">
           <button className="btn btn-ghost" onClick={onClose}>Close</button>
-          {row.hasPdf && (
+          {kind === 'prepared' && (
+            <>
+              <button className="btn btn-danger" onClick={() => onReject(row)}>
+                <Icon name="x" size={13} /> Reject
+              </button>
+              <button className="btn btn-primary" onClick={() => onApprove(row)}>
+                <Icon name="check" size={13} /> Approve & Apply
+              </button>
+            </>
+          )}
+          {kind === 'applied' && row.hasPdf && (
             <button className="btn btn-primary" onClick={() => onDownload(row)}>
               <Icon name="download" size={13} /> Download resume
             </button>
@@ -211,7 +221,36 @@ const TrackerView = () => {
     return out;
   }, [rows, q, portal, status, appFilter, sort]);
 
-  const flash = (m) => { setToast(m); setTimeout(() => setToast(''), 1600); };
+  const flash = (m) => { setToast(m); setTimeout(() => setToast(''), 2000); };
+
+  const handleApprove = async (row) => {
+    flash(`Approving ${row.company}…`);
+    setSelected(null);
+    try {
+      const res = await fetch(`${window.__API__.base}/api/approve/${row.dbId}`, { method: 'POST' });
+      const data = await res.json();
+      setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
+      if (data.status === 'applied') {
+        flash(`Applied to ${row.company}!`);
+      } else {
+        flash(`Approved — submit manually.`);
+      }
+    } catch {
+      flash('Approve failed — check server.');
+    }
+  };
+
+  const handleReject = async (row) => {
+    flash(`Rejecting ${row.company}…`);
+    setSelected(null);
+    try {
+      await fetch(`${window.__API__.base}/api/reject/${row.dbId}`, { method: 'POST' });
+      setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
+      flash(`Rejected ${row.company}.`);
+    } catch {
+      flash('Reject failed — check server.');
+    }
+  };
 
   const handleDownload = (row) => {
     if (row.hasPdf) {
@@ -346,6 +385,7 @@ const TrackerView = () => {
                   <th>JD</th>
                   <th>Resume</th>
                   <SortHeader label="Status"           k="status"       sort={sort} setSort={setSort} />
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -373,6 +413,14 @@ const TrackerView = () => {
                       ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
                     <td><StatusPill status={r.status} /></td>
+                    <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => handleApprove(r)}>
+                        <Icon name="check" size={11} /> Apply
+                      </button>
+                      <button className="btn btn-sm btn-danger" onClick={() => handleReject(r)}>
+                        <Icon name="x" size={11} /> Reject
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -387,6 +435,8 @@ const TrackerView = () => {
         onClose={() => setSelected(null)}
         onDownload={handleDownload}
         onToggleReview={handleToggleReview}
+        onApprove={handleApprove}
+        onReject={handleReject}
       />
 
       {toast && (

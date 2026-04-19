@@ -6,7 +6,8 @@ const Sidebar = ({ page, onNav, collapsed, onLogout, profile }) => {
     { key: 'recruiters', label: 'Recruiters', icon: 'user' },
     { key: 'analytics', label: 'Analytics', icon: 'analytics' },
   ];
-  const initials = profile.name.split(' ').map(s => s[0]).slice(0,2).join('');
+  const name = (profile && profile.name) ? profile.name : '…';
+  const initials = name.split(' ').map(s => s[0]).filter(Boolean).slice(0, 2).join('');
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -29,10 +30,10 @@ const Sidebar = ({ page, onNav, collapsed, onLogout, profile }) => {
       </button>
       <div className="sidebar-foot">
         <div className="user-card">
-          <div className="avatar">{initials}</div>
+          <div className="avatar">{initials || '?'}</div>
           <div className="user-card-text">
-            <div className="user-card-name">{profile.name}</div>
-            <div className="user-card-mail">{profile.email}</div>
+            <div className="user-card-name">{name}</div>
+            <div className="user-card-mail">{profile ? profile.email : ''}</div>
           </div>
         </div>
       </div>
@@ -55,7 +56,7 @@ const Topbar = ({ page, onToggleSidebar, theme, onToggleTheme }) => {
         </button>
         <span className="page-title">{titles[page]}</span>
         <span className="crumb-sep">/</span>
-        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Workspace · Morgan</span>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Workspace</span>
       </div>
       <div className="topbar-right">
         <button className="icon-btn" onClick={onToggleTheme} aria-label="Toggle theme">

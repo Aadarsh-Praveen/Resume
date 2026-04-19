@@ -208,6 +208,9 @@ html[data-theme="dark"] .btn-primary:hover { background: #6366f1; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-ghost { background: transparent; color: var(--text-2); border-color: var(--border); }
 .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { background: #b91c1c; }
+.btn-sm { height: 26px; padding: 0 8px; font-size: 11px; gap: 4px; }
 .btn-block { width: 100%; }
 
 .otp-row {
