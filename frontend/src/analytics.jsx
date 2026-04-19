@@ -1,9 +1,14 @@
 // Analytics page with charts
-const { useState: useStateA, useMemo: useMemoA } = React;
+const { useState: useStateA, useMemo: useMemoA, useEffect: useEffectA } = React;
 
 const LineChart = ({ labels, seriesA, seriesB, labelA, labelB }) => {
+  if (!labels || labels.length < 2) return (
+    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+      Not enough data yet — run the agent a few times to see trends.
+    </div>
+  );
   const W = 560, H = 220, P = { t: 20, r: 16, b: 28, l: 36 };
-  const max = Math.max(...seriesA, ...seriesB) * 1.15;
+  const max = Math.max(...seriesA, ...seriesB, 1) * 1.15;
   const step = (W - P.l - P.r) / (labels.length - 1);
   const y = v => H - P.b - (v / max) * (H - P.t - P.b);
   const path = (s) => s.map((v, i) => `${i === 0 ? 'M' : 'L'} ${P.l + i * step} ${y(v)}`).join(' ');
@@ -44,8 +49,13 @@ const LineChart = ({ labels, seriesA, seriesB, labelA, labelB }) => {
 };
 
 const BarChart = ({ data, color='var(--accent)' }) => {
+  if (!data || data.every(d => d.value === 0)) return (
+    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+      No ATS scores yet.
+    </div>
+  );
   const W = 420, H = 200, P = { t: 12, r: 12, b: 28, l: 28 };
-  const max = Math.max(...data.map(d => d.value)) * 1.15;
+  const max = Math.max(...data.map(d => d.value), 1) * 1.15;
   const bw = (W - P.l - P.r) / data.length;
   const y = v => H - P.b - (v / max) * (H - P.t - P.b);
   return (
@@ -72,6 +82,11 @@ const BarChart = ({ data, color='var(--accent)' }) => {
 };
 
 const DonutChart = ({ data }) => {
+  if (!data || data.length === 0 || data.every(d => d.value === 0)) return (
+    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+      No application data yet.
+    </div>
+  );
   const S = 200, cx = S/2, cy = S/2, r = 72, rw = 20;
   const total = data.reduce((s, d) => s + d.value, 0);
   const colors = ['var(--accent)', '#10b981', '#f59e0b', '#06b6d4', '#94a3b8'];
@@ -114,21 +129,40 @@ const DonutChart = ({ data }) => {
   );
 };
 
-const AnalyticsView = ({ data }) => {
-  const [range, setRange] = useStateA('30d');
-  const ranges = [
-    { k: '7d', label: '7D' },
-    { k: '30d', label: '30D' },
-    { k: '90d', label: '90D' },
-    { k: 'all', label: 'All' }
-  ];
-  // scale series gently per range for realism
-  const scale = range === '7d' ? 0.35 : range === '30d' ? 1 : range === '90d' ? 2.4 : 3.6;
-  const scaleArr = (a) => a.map(v => Math.round(v * scale));
-  const seriesA = useMemoA(() => scaleArr(data.appliedSeries), [range]);
-  const seriesB = useMemoA(() => scaleArr(data.preparedSeries), [range]);
-  const totalApplied = seriesA.reduce((s,v)=>s+v,0);
-  const totalPrep = seriesB.reduce((s,v)=>s+v,0);
+const AnalyticsView = () => {
+  const [weekly,  setWeekly]  = useStateA(null);
+  const [ats,     setAts]     = useStateA([]);
+  const [funnel,  setFunnel]  = useStateA([]);
+  const [portals, setPortals] = useStateA([]);
+  const [loading, setLoading] = useStateA(true);
+
+  useEffectA(() => {
+    const api = window.__API__;
+    setLoading(true);
+    Promise.all([api.weekly(), api.ats(), api.funnel(), api.portals()])
+      .then(([w, a, f, p]) => {
+        setWeekly(w);
+        setAts(a);
+        setFunnel(f);
+        setPortals(p);
+      })
+      .catch(console.warn)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const weekLabels    = weekly ? weekly.weekLabels    : [];
+  const appliedSeries = weekly ? weekly.appliedSeries : [];
+  const preparedSeries = weekly ? weekly.preparedSeries : [];
+  const totalApplied  = appliedSeries.reduce((s, v) => s + v, 0);
+  const totalPrep     = preparedSeries.reduce((s, v) => s + v, 0);
+  const avgAts = (() => {
+    if (!ats || ats.length === 0) return 0;
+    const total = ats.reduce((s, b) => s + b.value, 0);
+    if (total === 0) return 0;
+    const midpoints = { '< 60': 55, '60–69': 65, '70–79': 75, '80–89': 85, '90+': 93 };
+    const weighted = ats.reduce((s, b) => s + (midpoints[b.label] || 75) * b.value, 0);
+    return Math.round(weighted / total);
+  })();
 
   return (
     <div data-screen-label="Analytics">
@@ -137,33 +171,28 @@ const AnalyticsView = ({ data }) => {
           <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', margin: '0 0 4px' }}>Analytics</h1>
           <p style={{ margin: 0, color: 'var(--text-2)', fontSize: 13.5 }}>How your apply agent is performing across portals and roles.</p>
         </div>
-        <div className="range-bar">
-          {ranges.map(r => (
-            <button key={r.k} className={range === r.k ? 'active' : ''} onClick={() => setRange(r.k)}>{r.label}</button>
-          ))}
-        </div>
       </div>
 
       <div className="an-kpi-grid">
         <div className="card kpi">
           <div className="card-title">Applications submitted</div>
           <div className="kpi-val">{totalApplied}</div>
-          <div className="kpi-sub"><span className="kpi-delta up">▲ 22%</span> vs. prior period</div>
+          <div className="kpi-sub">last 8 weeks</div>
         </div>
         <div className="card kpi">
           <div className="card-title">Resumes prepared</div>
           <div className="kpi-val">{totalPrep}</div>
-          <div className="kpi-sub"><span className="kpi-delta up">▲ 14%</span> vs. prior period</div>
+          <div className="kpi-sub">last 8 weeks</div>
         </div>
         <div className="card kpi">
           <div className="card-title">Avg ATS score</div>
-          <div className="kpi-val">82</div>
-          <div className="kpi-sub"><span className="kpi-delta up">▲ 3</span> vs. prior period</div>
+          <div className="kpi-val">{avgAts || '—'}</div>
+          <div className="kpi-sub">across tailored resumes</div>
         </div>
         <div className="card kpi">
-          <div className="card-title">Recruiter reply rate</div>
-          <div className="kpi-val">28.4%</div>
-          <div className="kpi-sub"><span className="kpi-delta down">▼ 0.6pp</span> vs. prior period</div>
+          <div className="card-title">Sources active</div>
+          <div className="kpi-val">{portals.length}</div>
+          <div className="kpi-sub">job portals with results</div>
         </div>
       </div>
 
@@ -172,14 +201,14 @@ const AnalyticsView = ({ data }) => {
           <div className="chart-head">
             <div>
               <h3>Submissions over time</h3>
-              <p className="sub">Applied vs. prepared</p>
+              <p className="sub">Applied vs. prepared · last 8 weeks</p>
             </div>
             <div className="legend">
               <span><i style={{ background: 'var(--accent)' }}></i>Applied</span>
               <span><i style={{ background: 'var(--success)' }}></i>Prepared</span>
             </div>
           </div>
-          <LineChart labels={data.weekLabels} seriesA={seriesA} seriesB={seriesB} />
+          <LineChart labels={weekLabels} seriesA={appliedSeries} seriesB={preparedSeries} />
         </div>
         <div className="card chart-card">
           <div className="chart-head">
@@ -188,7 +217,7 @@ const AnalyticsView = ({ data }) => {
               <p className="sub">Across {totalApplied + totalPrep} tailored resumes</p>
             </div>
           </div>
-          <BarChart data={data.atsBuckets} />
+          <BarChart data={ats} />
         </div>
       </div>
 
@@ -197,12 +226,15 @@ const AnalyticsView = ({ data }) => {
           <div className="chart-head">
             <div>
               <h3>Application funnel</h3>
-              <p className="sub">From discovery to onsite</p>
+              <p className="sub">From discovery to application</p>
             </div>
           </div>
-          {data.funnelStages.map((s, i) => {
-            const first = data.funnelStages[0].value;
-            const pct = (s.value / first) * 100;
+          {funnel.length === 0 || funnel[0].value === 0 ? (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              No data yet.
+            </div>
+          ) : funnel.map((s, i) => {
+            const pct = (s.value / funnel[0].value) * 100;
             return (
               <div key={i} className="funnel-row">
                 <div className="funnel-label">{s.label}</div>
@@ -216,33 +248,10 @@ const AnalyticsView = ({ data }) => {
           <div className="chart-head">
             <div>
               <h3>Portal mix</h3>
-              <p className="sub">Where applications went</p>
+              <p className="sub">Where jobs were sourced from</p>
             </div>
           </div>
-          <DonutChart data={data.portalMix} />
-        </div>
-      </div>
-
-      <div className="an-row">
-        <div className="card chart-card">
-          <div className="chart-head">
-            <div>
-              <h3>Top companies</h3>
-              <p className="sub">Most active targets this period</p>
-            </div>
-          </div>
-          {data.topCompanies.map((c, i) => (
-            <div key={i} className="co-row">
-              <span className="co-name">
-                <span className="co-mark">{c.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</span>
-                {c.name}
-              </span>
-              <span style={{ display: 'inline-flex', gap: 18, alignItems:'center', fontVariantNumeric:'tabular-nums' }}>
-                <span style={{ color:'var(--text-2)' }}>{c.applied} applied</span>
-                <span className={`pill ${c.replies > 0 ? 'success' : ''}`}><span className="pill-dot"></span>{c.replies} replies</span>
-              </span>
-            </div>
-          ))}
+          <DonutChart data={portals} />
         </div>
       </div>
     </div>

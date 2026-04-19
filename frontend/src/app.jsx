@@ -1,34 +1,55 @@
-// Root app — routing + state + tweaks wiring
+// Root app — routing + state + data loading
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const App = () => {
   const defaults = window.__TWEAKS__ || { theme: 'light', sidebarCollapsed: false };
   const saved = (() => { try { return JSON.parse(localStorage.getItem('applyflow_state') || '{}'); } catch { return {}; } })();
 
-  const [authed, setAuthed] = useStateApp(saved.authed || false);
-  const [page, setPage] = useStateApp(saved.page || 'dashboard');
-  const [theme, setTheme] = useStateApp(saved.theme || defaults.theme);
-  const [sidebarCollapsed, setSidebarCollapsed] = useStateApp(
-    saved.sidebarCollapsed ?? defaults.sidebarCollapsed
-  );
-  const [tweaksVisible, setTweaksVisible] = useStateApp(false);
-  const [data, setData] = useStateApp(window.__DATA__);
+  const [authed, setAuthed]                 = useStateApp(saved.authed || false);
+  const [page, setPage]                     = useStateApp(saved.page || 'dashboard');
+  const [theme, setTheme]                   = useStateApp(saved.theme || defaults.theme);
+  const [sidebarCollapsed, setSidebarCollapsed] = useStateApp(saved.sidebarCollapsed ?? defaults.sidebarCollapsed);
+  const [tweaksVisible, setTweaksVisible]   = useStateApp(false);
 
-  // persist
+  // Global data loaded once after login
+  const [profile, setProfile] = useStateApp(null);
+  const [stats, setStats]     = useStateApp({ total: 0, pending: 0, applied: 0, rejected: 0 });
+  const [activity, setActivity] = useStateApp([]);
+
+  // persist nav/theme
   useEffectApp(() => {
     localStorage.setItem('applyflow_state', JSON.stringify({ authed, page, theme, sidebarCollapsed }));
   }, [authed, page, theme, sidebarCollapsed]);
 
-  // apply theme
   useEffectApp(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  // Load profile + stats after login
+  useEffectApp(() => {
+    if (!authed) return;
+    const api = window.__API__;
+    api.profile().then(setProfile).catch(console.warn);
+    api.stats().then(setStats).catch(console.warn);
+    api.recentJobs(5).then(jobs => {
+      setActivity(jobs.map(j => ({
+        type: j.approval_status === 'applied' ? 'applied' : 'resume',
+        title: j.approval_status === 'applied'
+          ? `Applied to ${j.title}`
+          : `Resume tailored for ${j.title}`,
+        sub: [j.company, j.source, j.ats_score ? `ATS ${Math.round(j.ats_score)}` : null]
+          .filter(Boolean).join(' · '),
+        time: api.relTime(j.applied_at || j.created_at),
+        icon: j.approval_status === 'applied' ? 'check' : 'file',
+      })));
+    }).catch(console.warn);
+  }, [authed]);
 
   // Tweaks bridge
   useEffectApp(() => {
     const handler = (e) => {
       if (!e.data) return;
-      if (e.data.type === '__activate_edit_mode') setTweaksVisible(true);
+      if (e.data.type === '__activate_edit_mode')   setTweaksVisible(true);
       if (e.data.type === '__deactivate_edit_mode') setTweaksVisible(false);
     };
     window.addEventListener('message', handler);
@@ -39,7 +60,7 @@ const App = () => {
   const persistTweak = (edits) => {
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
   };
-  const updateTheme = (t) => { setTheme(t); persistTweak({ theme: t }); };
+  const updateTheme   = (t) => { setTheme(t);   persistTweak({ theme: t }); };
   const updateSidebar = (c) => { setSidebarCollapsed(c); persistTweak({ sidebarCollapsed: c }); };
 
   if (!authed) {
@@ -62,7 +83,7 @@ const App = () => {
         onNav={setPage}
         collapsed={sidebarCollapsed}
         onLogout={() => setAuthed(false)}
-        profile={data.profile}
+        profile={profile}
       />
       <main className="main">
         <Topbar
@@ -72,10 +93,10 @@ const App = () => {
           onToggleTheme={() => updateTheme(theme === 'light' ? 'dark' : 'light')}
         />
         <div className="content">
-          {page === 'dashboard' && <DashboardView profile={data.profile} data={data} onNav={setPage} />}
-          {page === 'tracker'   && <TrackerView data={data} setData={setData} />}
+          {page === 'dashboard'  && <DashboardView profile={profile} stats={stats} activity={activity} onNav={setPage} />}
+          {page === 'tracker'    && <TrackerView />}
           {page === 'recruiters' && <RecruitersView />}
-          {page === 'analytics' && <AnalyticsView data={data} />}
+          {page === 'analytics'  && <AnalyticsView />}
         </div>
       </main>
       <TweaksPanel

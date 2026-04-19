@@ -57,7 +57,14 @@ const LoginHero = () => (
 const LoginView = ({ onLogin }) => {
   const [mode, setMode] = useState('login'); // login | signup
   const [step, setStep] = useState('email'); // email | otp (login) ; form | otp | verified (signup)
-  const [email, setEmail] = useState('morgan.shaw@mailbox.com');
+  const [email, setEmail] = useState('');
+
+  // Pre-fill with real email from .env via /api/profile
+  useEffect(() => {
+    window.__API__ && window.__API__.profile()
+      .then(p => { if (p && p.email) setEmail(p.email); })
+      .catch(() => {});
+  }, []);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');

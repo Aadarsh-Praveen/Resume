@@ -1,204 +1,153 @@
-// Mock data generator for tracker
-(function(){
-  const PORTALS = ['LinkedIn', 'Indeed', 'Wellfound', 'Glassdoor', 'Company Site', 'Hacker News', 'Ladders', 'BuiltIn', 'Lever', 'Greenhouse'];
-  const COMPANIES = [
-    { name: 'Northwind Labs', domain: 'northwind.io' },
-    { name: 'Helix Systems', domain: 'helixsys.com' },
-    { name: 'Bluewave Robotics', domain: 'bluewave.ai' },
-    { name: 'Pinecone Health', domain: 'pineconehealth.co' },
-    { name: 'Cedar Analytics', domain: 'cedar-an.com' },
-    { name: 'Arcadia Finance', domain: 'arcadiafin.com' },
-    { name: 'Meridian Energy', domain: 'meridian-e.com' },
-    { name: 'Copper Cloud', domain: 'coppercloud.dev' },
-    { name: 'Fernlight Media', domain: 'fernlight.tv' },
-    { name: 'Quartz Mobility', domain: 'quartz.app' },
-    { name: 'Lumen Commerce', domain: 'lumencom.com' },
-    { name: 'Tessellate', domain: 'tessellate.xyz' },
-    { name: 'Obsidian Research', domain: 'obsidian-r.ai' },
-    { name: 'Harbor Logistics', domain: 'harborlog.com' },
-    { name: 'Juniper Foods', domain: 'juniperfoods.co' },
-    { name: 'Monolith AI', domain: 'monolith.ai' },
-    { name: 'Ember Security', domain: 'ember-sec.io' },
-    { name: 'Prism Education', domain: 'prismed.org' },
-    { name: 'Savannah Biotech', domain: 'savannahbio.com' },
-    { name: 'Granite Ventures', domain: 'granite.vc' },
-    { name: 'Halcyon Audio', domain: 'halcyon.fm' },
-    { name: 'Riverstone Games', domain: 'riverstone.gg' },
-    { name: 'Echo Networks', domain: 'echo-net.com' },
-    { name: 'Verdant Agri', domain: 'verdantag.com' }
-  ];
-  const POSITIONS = [
-    'Senior Product Designer', 'Staff UX Designer', 'Design Systems Lead',
-    'Product Designer II', 'Sr. Frontend Engineer', 'Full-Stack Engineer',
-    'Design Engineer', 'Senior UX Researcher', 'Principal Designer',
-    'Product Manager, Growth', 'UX/UI Designer', 'Design Manager',
-    'Senior Motion Designer', 'Frontend Platform Engineer', 'Staff Product Designer',
-    'Associate Product Designer', 'Design Technologist', 'Sr. Content Designer'
-  ];
+// API fetch functions — connects to FastAPI backend at http://localhost:8000
+// Every piece of data in the frontend comes from here; no hardcoded values.
+(function () {
+  const API = 'http://localhost:8000';
 
-  function seedRand(seed) {
-    let s = seed;
-    return () => {
-      s = (s * 9301 + 49297) % 233280;
-      return s / 233280;
-    };
+  async function apiFetch(path) {
+    const res = await fetch(API + path);
+    if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
+    return res.json();
   }
-  const rand = seedRand(42);
-  const pick = (arr) => arr[Math.floor(rand() * arr.length)];
-  const pad = (n) => String(n).padStart(2, '0');
 
-  function fmtDateTime(d) {
+  // ── Formatters ──────────────────────────────────────────────────────────────
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
     const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return `${m[d.getMonth()]} ${pad(d.getDate())}, ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-  function fmtDate(d) {
-    const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const pad = n => String(n).padStart(2, '0');
     return `${m[d.getMonth()]} ${pad(d.getDate())}, ${d.getFullYear()}`;
   }
 
-  // reference "now"
-  const NOW = new Date('2026-04-18T10:30:00');
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const pad = n => String(n).padStart(2, '0');
+    return `${m[d.getMonth()]} ${pad(d.getDate())}, ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
 
-  function genAppliedRow(i) {
-    const co = COMPANIES[i % COMPANIES.length];
-    const pos = pick(POSITIONS);
-    const postedDaysAgo = 1 + Math.floor(rand() * 14);
-    const posted = new Date(NOW.getTime() - postedDaysAgo * 86400000);
-    const appliedHoursAfter = 2 + Math.floor(rand() * 60);
-    const applied = new Date(posted.getTime() + appliedHoursAfter * 3600000);
-    const ats = 58 + Math.floor(rand() * 42);
-    const notified = rand() > 0.2;
-    const manualReview = rand() > 0.55;
-    const isApplied = rand() > 0.15;
-    const appStatusRoll = rand();
-    const appStatus = !isApplied ? 'Pending' : (appStatusRoll > 0.7 ? 'Rejected' : appStatusRoll > 0.35 ? 'Interviewing' : appStatusRoll > 0.2 ? 'Accepted' : 'Pending');
-    const slug = co.name.toLowerCase().replace(/[^a-z]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  function relTime(iso) {
+    if (!iso) return '—';
+    const diff = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diff / 60000);
+    if (min < 60) return min <= 1 ? 'Just now' : `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} hr ago`;
+    const days = Math.floor(hr / 24);
+    if (days === 1) return 'Yesterday';
+    return `${days} days ago`;
+  }
+
+  function capitalize(s) {
+    if (!s) return s;
+    return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
+  }
+
+  // ── Mappers ─────────────────────────────────────────────────────────────────
+
+  function mapJobToRow(job) {
+    const isApplied = job.approval_status === 'applied';
+    const isPrepared = job.approval_status === 'pending_review' || job.processed === 1;
+    const pdfFile = job.pdf_path ? job.pdf_path.split('/').pop() : null;
     return {
-      id: `APP-${1000 + i}`,
-      portal: pick(PORTALS),
-      company: co.name,
-      companyDomain: co.domain,
-      position: pos,
-      jobPosted: fmtDate(posted),
-      jobPostedRaw: posted.getTime(),
-      agentTime: fmtDateTime(applied),
-      agentTimeRaw: applied.getTime(),
-      ats,
-      email: `careers@${co.domain}`,
-      jdUrl: `https://jobs.${co.domain}/req-${2400 + i}`,
-      notified,
-      resume: `resume_${slug}_${2026}.pdf`,
-      manualReview,
-      status: isApplied ? 'Applied' : 'Not Applied',
-      appStatus
+      id: (isApplied ? 'APP-' : 'RES-') + job.id,
+      dbId: job.id,
+      portal: capitalize(job.source) || 'Unknown',
+      company: job.company || '—',
+      companyDomain: '',
+      position: job.title || '—',
+      jobPosted: fmtDate(job.posted_date || job.created_at),
+      jobPostedRaw: new Date(job.posted_date || job.created_at || 0).getTime(),
+      agentTime: fmtDateTime(job.applied_at || job.created_at),
+      agentTimeRaw: new Date(job.applied_at || job.created_at || 0).getTime(),
+      ats: job.ats_score ? Math.round(job.ats_score) : 0,
+      email: '',
+      jdUrl: job.url || '#',
+      notified: false,
+      resume: pdfFile || '—',
+      hasPdf: !!pdfFile,
+      manualReview: false,
+      status: isApplied ? 'Applied' : isPrepared ? 'Resume Ready' : 'Drafting',
+      appStatus: 'Pending',
     };
   }
 
-  function genPreparedRow(i) {
-    const co = COMPANIES[(i + 7) % COMPANIES.length];
-    const pos = pick(POSITIONS);
-    const postedDaysAgo = 0 + Math.floor(rand() * 10);
-    const posted = new Date(NOW.getTime() - postedDaysAgo * 86400000);
-    const prepHoursAfter = 1 + Math.floor(rand() * 40);
-    const prepared = new Date(posted.getTime() + prepHoursAfter * 3600000);
-    const ats = 62 + Math.floor(rand() * 38);
-    const notified = rand() > 0.25;
-    const ready = rand() > 0.18;
-    const manuallyApplied = rand() > 0.5;
-    const appStatusRoll = rand();
-    const appStatus = !manuallyApplied ? 'Pending' : (appStatusRoll > 0.7 ? 'Rejected' : appStatusRoll > 0.4 ? 'Interviewing' : appStatusRoll > 0.2 ? 'Accepted' : 'Pending');
-    const slug = co.name.toLowerCase().replace(/[^a-z]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  function mapRecruiter(r) {
     return {
-      id: `RES-${2000 + i}`,
-      portal: pick(PORTALS),
-      company: co.name,
-      companyDomain: co.domain,
-      position: pos,
-      jobPosted: fmtDate(posted),
-      jobPostedRaw: posted.getTime(),
-      agentTime: fmtDateTime(prepared),
-      agentTimeRaw: prepared.getTime(),
-      ats,
-      email: `talent@${co.domain}`,
-      jdUrl: `https://careers.${co.domain}/posting-${3100 + i}`,
-      notified,
-      resume: `resume_${slug}_v2.pdf`,
-      status: ready ? 'Resume Ready' : 'Drafting',
-      manuallyApplied,
-      appStatus
+      id: 'REC-' + r.id,
+      name: r.name || 'Unknown',
+      company: r.company || '—',
+      companyDomain: '',
+      recruiterTitle: r.title || '—',
+      position: '—',
+      email: r.email || '—',
+      linkedin: r.linkedin_url ? r.linkedin_url.replace(/^https?:\/\//, '') : '—',
+      cold: !!r.email_sent,
+      linkedinMsg: !!r.linkedin_sent,
+      replied: !!r.replied,
+      repliedIn: r.replied_via || '—',
     };
   }
 
-  const ROW_COUNT = 22;
-  const appliedRows = Array.from({ length: ROW_COUNT }, (_, i) => genAppliedRow(i));
-  const preparedRows = Array.from({ length: ROW_COUNT }, (_, i) => genPreparedRow(i));
+  // ── Public API ───────────────────────────────────────────────────────────────
 
-  // Analytics data (last 30 days, weekly)
-  const weekLabels = ['Wk 11', 'Wk 12', 'Wk 13', 'Wk 14', 'Wk 15', 'Wk 16'];
-  const appliedSeries = [14, 19, 22, 17, 26, 31];
-  const preparedSeries = [22, 28, 30, 26, 34, 39];
-  const atsBuckets = [
-    { label: '< 60', value: 4 },
-    { label: '60–69', value: 9 },
-    { label: '70–79', value: 18 },
-    { label: '80–89', value: 24 },
-    { label: '90+', value: 11 }
-  ];
-  const portalMix = [
-    { label: 'LinkedIn', value: 34 },
-    { label: 'Indeed', value: 22 },
-    { label: 'Company Site', value: 18 },
-    { label: 'Wellfound', value: 12 },
-    { label: 'Other', value: 14 }
-  ];
-  const funnelStages = [
-    { label: 'Jobs Discovered', value: 312 },
-    { label: 'Resumes Prepared', value: 186 },
-    { label: 'Applications Sent', value: 132 },
-    { label: 'Recruiter Reply', value: 41 },
-    { label: 'Screens Scheduled', value: 18 },
-    { label: 'Onsites',          value: 6 }
-  ];
-  const topCompanies = [
-    { name: 'Monolith AI',       applied: 4, replies: 2 },
-    { name: 'Helix Systems',     applied: 3, replies: 2 },
-    { name: 'Cedar Analytics',   applied: 3, replies: 1 },
-    { name: 'Bluewave Robotics', applied: 2, replies: 1 },
-    { name: 'Copper Cloud',      applied: 2, replies: 1 },
-    { name: 'Northwind Labs',    applied: 2, replies: 0 }
-  ];
+  window.__API__ = {
+    base: API,
 
-  // Dashboard timeline
-  const activity = [
-    { type: 'applied', title: 'Applied to Senior Product Designer', sub: 'Monolith AI · via LinkedIn', time: '10 min ago', icon: 'check' },
-    { type: 'resume',  title: 'Resume tailored for Staff UX Designer', sub: 'Helix Systems · ATS 92', time: '42 min ago', icon: 'file' },
-    { type: 'reply',   title: 'Recruiter reply received', sub: 'Bluewave Robotics · careers@bluewave.ai', time: '2 hr ago', icon: 'mail' },
-    { type: 'applied', title: 'Applied to Design Systems Lead', sub: 'Cedar Analytics · via Company Site', time: '5 hr ago', icon: 'check' },
-    { type: 'resume',  title: 'Resume queued for 4 new postings', sub: 'Auto-prep batch · 21:04', time: 'Yesterday', icon: 'file' }
-  ];
+    async profile()  { return apiFetch('/api/profile'); },
+    async stats()    { return apiFetch('/api/stats'); },
 
-  const profile = {
-    name: 'Morgan Shaw',
-    email: 'morgan.shaw@mailbox.com',
-    role: 'Senior Product Designer · 7 yrs',
-    location: 'Austin, TX',
-    phone: '+1 (512) 555-0117',
-    agentId: 'agent-mshaw-7f3a',
-    plan: 'Pro',
-    joined: 'Mar 2024',
-    skills: [
-      { name: 'Product Design', v: 92 },
-      { name: 'Design Systems', v: 86 },
-      { name: 'Prototyping',    v: 78 },
-      { name: 'UX Research',    v: 71 },
-      { name: 'Frontend (HTML/CSS)', v: 64 }
-    ]
-  };
+    async recentJobs(limit = 5) {
+      return apiFetch(`/api/jobs?limit=${limit}`);
+    },
 
-  window.__DATA__ = {
-    appliedRows, preparedRows,
-    weekLabels, appliedSeries, preparedSeries,
-    atsBuckets, portalMix, funnelStages, topCompanies,
-    activity, profile
+    async appliedRows() {
+      const jobs = await apiFetch('/api/jobs?approval_status=applied&limit=500');
+      return jobs.map(mapJobToRow);
+    },
+
+    async preparedRows() {
+      const jobs = await apiFetch('/api/jobs?approval_status=pending_review&limit=500');
+      return jobs.map(mapJobToRow);
+    },
+
+    async recruiters() {
+      const { recruiters, stats } = await apiFetch('/api/recruiters');
+      return { rows: recruiters.map(mapRecruiter), stats };
+    },
+
+    async weekly() {
+      const data = await apiFetch('/api/analytics/weekly');
+      return {
+        weekLabels:    data.map(d => d.week),
+        appliedSeries: data.map(d => d.applied),
+        preparedSeries: data.map(d => d.prepared),
+      };
+    },
+
+    async ats() {
+      const data = await apiFetch('/api/analytics/ats');
+      const labelMap = { '<60': '< 60', '60-69': '60–69', '70-79': '70–79', '80-89': '80–89', '90+': '90+' };
+      return data.map(d => ({ label: labelMap[d.bucket] || d.bucket, value: d.count }));
+    },
+
+    async funnel() {
+      const d = await apiFetch('/api/analytics/funnel');
+      return [
+        { label: 'Jobs Discovered',  value: d.discovered || 0 },
+        { label: 'Resumes Prepared', value: d.prepared   || 0 },
+        { label: 'Applications Sent', value: d.applied   || 0 },
+      ];
+    },
+
+    async portals() {
+      const data = await apiFetch('/api/analytics/portals');
+      return data.map(d => ({ label: capitalize(d.source), value: d.count }));
+    },
+
+    relTime,
+    fmtDate,
+    fmtDateTime,
   };
 })();

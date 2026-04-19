@@ -2,13 +2,22 @@
 FastAPI dashboard for the job application agent.
 
 Routes:
-    GET  /                 All jobs feed
-    GET  /pending          Jobs awaiting approval
-    GET  /history          Applied / rejected jobs
-    GET  /job/{id}/resume  Serve the tailored PDF
-    POST /approve/{id}     Approve → trigger auto-apply
-    POST /reject/{id}      Mark rejected
-    POST /run              Trigger GitHub Actions workflow_dispatch
+    GET  /                      All jobs feed (HTML)
+    GET  /pending               Jobs awaiting approval (HTML)
+    GET  /history               Applied / rejected jobs (HTML)
+    GET  /job/{id}/resume       Serve the tailored PDF
+    POST /approve/{id}          Approve → trigger auto-apply
+    POST /reject/{id}           Mark rejected
+    POST /run                   Trigger GitHub Actions workflow_dispatch
+
+    GET  /api/profile           Applicant profile (JSON)
+    GET  /api/stats             Job counts (JSON)
+    GET  /api/jobs              Paginated job list (JSON)
+    GET  /api/recruiters        Recruiter list + stats (JSON)
+    GET  /api/analytics/weekly  Weekly submission counts (JSON)
+    GET  /api/analytics/ats     ATS score distribution (JSON)
+    GET  /api/analytics/funnel  Application funnel (JSON)
+    GET  /api/analytics/portals Portal mix (JSON)
 """
 
 import os
@@ -18,7 +27,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -31,6 +41,8 @@ load_dotenv()
 from pipeline.dedup import (
     init_db, get_job, get_all_jobs, get_pending_review_jobs,
     get_stats, set_approval, mark_applied,
+    get_all_recruiters, get_recruiter_stats,
+    get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
 )
 from pipeline.auto_apply import apply_job
 
@@ -51,6 +63,16 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Job Agent Dashboard", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:3001", "http://127.0.0.1:3001",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 _HERE = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
@@ -199,3 +221,68 @@ async def manual_run(request: Request, mode: str = Form(default="full")):
         logger.warning("workflow_dispatch failed: %d %s", resp.status_code, resp.text)
 
     return RedirectResponse("/", status_code=303)
+
+
+# ── JSON API (consumed by the React frontend) ─────────────────────────────────
+
+@app.get("/api/profile")
+async def api_profile():
+    try:
+        from config import YOUR_YEARS_EXPERIENCE, TARGET_ROLES
+        years = YOUR_YEARS_EXPERIENCE
+        roles = TARGET_ROLES
+    except ImportError:
+        years, roles = 0, []
+    return JSONResponse({
+        "name":             os.getenv("APPLICANT_NAME", ""),
+        "email":            os.getenv("APPLICANT_EMAIL", ""),
+        "role":             os.getenv("APPLICANT_ROLE", ", ".join(roles[:2]) if roles else ""),
+        "location":         os.getenv("APPLICANT_LOCATION", ""),
+        "phone":            os.getenv("APPLICANT_PHONE", ""),
+        "linkedin":         os.getenv("APPLICANT_LINKEDIN", ""),
+        "github":           os.getenv("APPLICANT_GITHUB", ""),
+        "years_experience": years,
+        "target_roles":     roles,
+    })
+
+
+@app.get("/api/stats")
+async def api_stats():
+    return JSONResponse(get_stats(DB_PATH))
+
+
+@app.get("/api/jobs")
+async def api_jobs(limit: int = 50, offset: int = 0, approval_status: str = ""):
+    jobs = get_all_jobs(
+        limit=limit, offset=offset,
+        approval_status=approval_status or None,
+        db_path=DB_PATH,
+    )
+    return JSONResponse(jobs)
+
+
+@app.get("/api/recruiters")
+async def api_recruiters(limit: int = 200, offset: int = 0):
+    recruiters = get_all_recruiters(limit=limit, offset=offset, db_path=DB_PATH)
+    stats = get_recruiter_stats(DB_PATH)
+    return JSONResponse({"recruiters": recruiters, "stats": stats})
+
+
+@app.get("/api/analytics/weekly")
+async def api_weekly():
+    return JSONResponse(get_weekly_submissions(db_path=DB_PATH))
+
+
+@app.get("/api/analytics/ats")
+async def api_ats():
+    return JSONResponse(get_ats_distribution(db_path=DB_PATH))
+
+
+@app.get("/api/analytics/funnel")
+async def api_funnel():
+    return JSONResponse(get_funnel_data(db_path=DB_PATH))
+
+
+@app.get("/api/analytics/portals")
+async def api_portals():
+    return JSONResponse(get_portal_mix(db_path=DB_PATH))
