@@ -49,8 +49,9 @@ logger = logging.getLogger("agent")
 from pipeline.dedup import (
     init_db, is_duplicate, insert_job,
     get_unprocessed_jobs, mark_processed, get_todays_processed_jobs,
-    set_cover_letter, insert_recruiter,
+    set_cover_letter, set_fit_reason, insert_recruiter,
 )
+from pipeline.fit_filter import assess_fit
 from pipeline.jd_extractor import extract_jd_text, extract_min_years
 from pipeline.tailor_resume import tailor_resume
 from pipeline.ats_scorer import score_resume
@@ -296,6 +297,20 @@ def process_job(job: dict) -> bool:
             logger.error("Cannot extract JD for job #%d: %s", job_id, e)
             mark_processed(job_id, None, None, "jd_failed", DB_PATH)
             return False
+
+    # ── LLM fit filter (runs before expensive tailoring) ──────────────────────
+    try:
+        fit = assess_fit(jd_text)
+        if fit["skip"]:
+            logger.info(
+                "Fit filter skipping job #%d (%s @ %s): %s",
+                job_id, title, company, fit["reason"],
+            )
+            set_fit_reason(job_id, fit["reason"], DB_PATH)
+            mark_processed(job_id, None, None, "skipped_unqualified", DB_PATH)
+            return False
+    except Exception as e:
+        logger.warning("Fit filter raised unexpectedly for job #%d: %s — continuing", job_id, e)
 
     # ── Tailor resume ─────────────────────────────────────────────────────────
     try:

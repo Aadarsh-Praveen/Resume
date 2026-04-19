@@ -46,6 +46,20 @@ SAMPLE_HTML = """
 """
 
 
+def _make_mock_session(status_code=200, text=SAMPLE_HTML, side_effect=None):
+    """Return a mock requests.Session whose .get() returns the configured response."""
+    mock_session = MagicMock()
+    if side_effect:
+        mock_session.get.side_effect = side_effect
+    else:
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        mock_resp.text = text
+        mock_resp.raise_for_status = MagicMock()
+        mock_session.get.return_value = mock_resp
+    return mock_session
+
+
 class TestParseJobCards(unittest.TestCase):
 
     def test_extracts_relevant_jobs(self):
@@ -106,8 +120,9 @@ class TestIsRelevant(unittest.TestCase):
     def test_ai_engineer_is_relevant(self):
         self.assertTrue(_is_relevant("AI Engineer, Trust & Safety"))
 
-    def test_nlp_in_description_is_relevant(self):
-        self.assertTrue(_is_relevant("Research Engineer", "NLP and LLM applications"))
+    def test_generic_title_without_ml_keywords_not_relevant(self):
+        # "Research Engineer" alone has no ML keyword in the title → filtered
+        self.assertFalse(_is_relevant("Research Engineer"))
 
     def test_vp_is_excluded(self):
         self.assertFalse(_is_relevant("VP of Data Science"))
@@ -130,26 +145,15 @@ class TestIsRelevant(unittest.TestCase):
 
 class TestFetchLinkedinJobs(unittest.TestCase):
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_returns_jobs_on_success(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = SAMPLE_HTML
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_returns_jobs_on_success(self, mock_session_cls):
+        mock_session_cls.return_value = _make_mock_session(200, SAMPLE_HTML)
         jobs = fetch_linkedin_jobs([{"keywords": "data scientist", "location": "United States"}])
         self.assertGreater(len(jobs), 0)
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_deduplicates_across_queries(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = SAMPLE_HTML
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
-        # Two identical queries → same URLs, should be deduped
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_deduplicates_across_queries(self, mock_session_cls):
+        mock_session_cls.return_value = _make_mock_session(200, SAMPLE_HTML)
         queries = [
             {"keywords": "data scientist", "location": "United States"},
             {"keywords": "data scientist", "location": "United States"},
@@ -158,43 +162,54 @@ class TestFetchLinkedinJobs(unittest.TestCase):
         urls = [j["url"] for j in jobs]
         self.assertEqual(len(urls), len(set(urls)))
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_handles_429_rate_limit(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 429
-        mock_get.return_value = mock_resp
-
+    @patch("sources.linkedin_jobs.time.sleep")
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_handles_429_rate_limit(self, mock_session_cls, mock_sleep):
+        # All calls return 429 — all retries exhausted → 0 jobs
+        mock_session_cls.return_value = _make_mock_session(429)
         jobs = fetch_linkedin_jobs([{"keywords": "data scientist", "location": "United States"}])
         self.assertEqual(jobs, [])
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_handles_403_blocked(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        mock_get.return_value = mock_resp
-
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_handles_403_blocked(self, mock_session_cls):
+        mock_session_cls.return_value = _make_mock_session(403)
         jobs = fetch_linkedin_jobs([{"keywords": "data scientist", "location": "United States"}])
         self.assertEqual(jobs, [])
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_handles_network_error(self, mock_get):
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_handles_network_error(self, mock_session_cls):
         import requests as req_lib
-        mock_get.side_effect = req_lib.ConnectionError("connection refused")
-
+        mock_session_cls.return_value = _make_mock_session(side_effect=req_lib.ConnectionError("refused"))
         jobs = fetch_linkedin_jobs([{"keywords": "data scientist", "location": "United States"}])
         self.assertEqual(jobs, [])
 
-    @patch("sources.linkedin_jobs.requests.get")
-    def test_uses_default_queries_when_none_provided(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<ul></ul>"
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
-        # Should not raise — uses config.LINKEDIN_QUERIES
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_uses_default_queries_when_none_provided(self, mock_session_cls):
+        mock_session_cls.return_value = _make_mock_session(200, "<ul></ul>")
         jobs = fetch_linkedin_jobs()
         self.assertIsInstance(jobs, list)
+
+    @patch("sources.linkedin_jobs.time.sleep")
+    @patch("sources.linkedin_jobs.requests.Session")
+    def test_stop_early_on_empty_page(self, mock_session_cls, mock_sleep):
+        # Call order: warmup, page0 (jobs), page1 (empty → stop)
+        mock_session = MagicMock()
+        warmup_resp = MagicMock(status_code=200, text="")
+        warmup_resp.raise_for_status = MagicMock()
+        full_resp   = MagicMock(status_code=200, text=SAMPLE_HTML)
+        full_resp.raise_for_status = MagicMock()
+        empty_resp  = MagicMock(status_code=200, text="<ul></ul>")
+        empty_resp.raise_for_status = MagicMock()
+        mock_session.get.side_effect = [warmup_resp, full_resp, empty_resp]
+        mock_session_cls.return_value = mock_session
+
+        jobs = fetch_linkedin_jobs(
+            [{"keywords": "data scientist", "location": "United States"}],
+            max_pages=3,
+        )
+        # page0 had results, page1 empty → stop-early; calls = warmup + page0 + page1 = 3
+        self.assertGreater(len(jobs), 0)
+        self.assertLessEqual(mock_session.get.call_count, 3)
 
 
 if __name__ == "__main__":
