@@ -12,7 +12,12 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pipeline.dedup import init_db, is_duplicate, insert_job, get_unprocessed_jobs, mark_processed, get_job
+from pipeline.dedup import (
+    init_db, is_duplicate, insert_job, get_unprocessed_jobs, mark_processed, get_job,
+    insert_recruiter, get_all_recruiters, update_recruiter, get_recruiter_stats,
+    get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
+    mark_applied, get_stats,
+)
 
 
 class TestDedup(unittest.TestCase):
@@ -33,6 +38,15 @@ class TestDedup(unittest.TestCase):
         # Calling twice is idempotent
         init_db(self.db)
 
+    def test_init_db_creates_recruiters_table(self):
+        # recruiters table must exist after init
+        import sqlite3
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='recruiters'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+
     # ── is_duplicate ─────────────────────────────────────────────────────────
 
     def test_new_job_is_not_duplicate(self):
@@ -48,7 +62,6 @@ class TestDedup(unittest.TestCase):
 
     def test_case_insensitive_company_strip(self):
         insert_job({"title": "ML Engineer", "company": "OpenAI", "url": "https://b.com"}, self.db)
-        # Leading/trailing spaces should be stripped
         self.assertTrue(is_duplicate("  OpenAI  ", "ML Engineer", self.db))
 
     # ── insert_job ───────────────────────────────────────────────────────────
@@ -110,6 +123,160 @@ class TestDedup(unittest.TestCase):
         self.assertEqual(row["processed"], 1)
         self.assertIsNone(row["pdf_path"])
         self.assertEqual(row["status"], "failed")
+
+    # ── Recruiter functions ───────────────────────────────────────────────────
+
+    def _make_job(self, company="Acme", title="ML Engineer"):
+        return insert_job({"title": title, "company": company, "url": "https://x.com"}, self.db)
+
+    def test_insert_recruiter_returns_id(self):
+        job_id = self._make_job()
+        rec = {"name": "Alice Smith", "title": "Head of Talent", "company": "Acme",
+               "email": "alice@acme.com", "linkedin_url": "https://linkedin.com/in/alice"}
+        rid = insert_recruiter(job_id, rec, "Hi Alice...", self.db)
+        self.assertIsInstance(rid, int)
+        self.assertGreater(rid, 0)
+
+    def test_get_all_recruiters_returns_inserted(self):
+        job_id = self._make_job()
+        rec = {"name": "Bob Jones", "title": "Recruiter", "company": "Acme",
+               "email": "bob@acme.com", "linkedin_url": None}
+        insert_recruiter(job_id, rec, None, self.db)
+        rows = get_all_recruiters(db_path=self.db)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Bob Jones")
+        self.assertEqual(rows[0]["email_sent"], 0)
+
+    def test_get_all_recruiters_company_filter(self):
+        j1 = self._make_job("Acme")
+        j2 = self._make_job("Globex")
+        insert_recruiter(j1, {"name": "A", "company": "Acme", "email": "a@acme.com"}, None, self.db)
+        insert_recruiter(j2, {"name": "B", "company": "Globex", "email": "b@globex.com"}, None, self.db)
+
+        acme = get_all_recruiters(company="Acme", db_path=self.db)
+        self.assertEqual(len(acme), 1)
+        self.assertEqual(acme[0]["name"], "A")
+
+    def test_update_recruiter_email_sent(self):
+        job_id = self._make_job()
+        rid = insert_recruiter(job_id, {"name": "C", "company": "Acme"}, None, self.db)
+        update_recruiter(rid, "email_sent", 1, self.db)
+        rows = get_all_recruiters(db_path=self.db)
+        self.assertEqual(rows[0]["email_sent"], 1)
+
+    def test_update_recruiter_replied_via(self):
+        job_id = self._make_job()
+        rid = insert_recruiter(job_id, {"name": "D", "company": "Acme"}, None, self.db)
+        update_recruiter(rid, "replied", 1, self.db)
+        update_recruiter(rid, "replied_via", "LinkedIn", self.db)
+        rows = get_all_recruiters(db_path=self.db)
+        self.assertEqual(rows[0]["replied"], 1)
+        self.assertEqual(rows[0]["replied_via"], "LinkedIn")
+
+    def test_update_recruiter_disallows_unknown_field(self):
+        job_id = self._make_job()
+        rid = insert_recruiter(job_id, {"name": "E", "company": "Acme"}, None, self.db)
+        with self.assertRaises(ValueError):
+            update_recruiter(rid, "name", "Hacked", self.db)
+
+    def test_get_recruiter_stats(self):
+        j1, j2, j3 = self._make_job(), self._make_job("B"), self._make_job("C")
+        r1 = insert_recruiter(j1, {"name": "R1", "company": "Acme"}, None, self.db)
+        r2 = insert_recruiter(j2, {"name": "R2", "company": "B"}, None, self.db)
+        r3 = insert_recruiter(j3, {"name": "R3", "company": "C"}, None, self.db)
+
+        update_recruiter(r1, "email_sent", 1, self.db)
+        update_recruiter(r2, "email_sent", 1, self.db)
+        update_recruiter(r1, "replied", 1, self.db)
+        update_recruiter(r3, "linkedin_sent", 1, self.db)
+
+        stats = get_recruiter_stats(self.db)
+        self.assertEqual(stats["tracked"], 3)
+        self.assertEqual(stats["emails_sent"], 2)
+        self.assertEqual(stats["linkedin_sent"], 1)
+        self.assertEqual(stats["replied"], 1)
+        self.assertEqual(stats["companies"], 3)
+
+    # ── Analytics functions ───────────────────────────────────────────────────
+
+    def test_get_weekly_submissions_returns_correct_weeks(self):
+        data = get_weekly_submissions(weeks=4, db_path=self.db)
+        self.assertEqual(len(data), 4)
+        for entry in data:
+            self.assertIn("week", entry)
+            self.assertIn("prepared", entry)
+            self.assertIn("applied", entry)
+
+    def test_get_weekly_submissions_counts_prepared(self):
+        job_id = self._make_job()
+        mark_processed(job_id, "/tmp/x.pdf", 90.0, "ready", self.db)
+        data = get_weekly_submissions(weeks=1, db_path=self.db)
+        # Current week's prepared count must be at least 1
+        self.assertGreaterEqual(data[0]["prepared"], 1)
+
+    def test_get_ats_distribution_all_buckets(self):
+        dist = get_ats_distribution(self.db)
+        buckets = [d["bucket"] for d in dist]
+        self.assertIn("<60", buckets)
+        self.assertIn("60-69", buckets)
+        self.assertIn("70-79", buckets)
+        self.assertIn("80-89", buckets)
+        self.assertIn("90+", buckets)
+
+    def test_get_ats_distribution_counts(self):
+        for score in [55.0, 65.0, 75.0, 85.0, 95.0]:
+            jid = insert_job({"title": f"Job {score}", "company": "Co", "url": "https://x.com"}, self.db)
+            mark_processed(jid, "/tmp/x.pdf", score, "ready", self.db)
+
+        dist = {d["bucket"]: d["count"] for d in get_ats_distribution(self.db)}
+        self.assertEqual(dist["<60"], 1)
+        self.assertEqual(dist["60-69"], 1)
+        self.assertEqual(dist["70-79"], 1)
+        self.assertEqual(dist["80-89"], 1)
+        self.assertEqual(dist["90+"], 1)
+
+    def test_get_funnel_data_structure(self):
+        funnel = get_funnel_data(self.db)
+        self.assertIn("discovered", funnel)
+        self.assertIn("prepared", funnel)
+        self.assertIn("applied", funnel)
+
+    def test_get_funnel_data_counts(self):
+        j1 = insert_job({"title": "A", "company": "X", "url": "https://a.com"}, self.db)
+        j2 = insert_job({"title": "B", "company": "Y", "url": "https://b.com"}, self.db)
+        mark_processed(j1, "/tmp/a.pdf", 90.0, "ready", self.db)
+        mark_applied(j1, "app-123", self.db)
+
+        funnel = get_funnel_data(self.db)
+        self.assertEqual(funnel["discovered"], 2)
+        self.assertEqual(funnel["prepared"], 1)
+        self.assertEqual(funnel["applied"], 1)
+
+    def test_get_portal_mix_groups_by_source(self):
+        for src in ["greenhouse", "greenhouse", "lever", "ashby"]:
+            insert_job({"title": "T", "company": "C", "url": f"https://{src}.com/{src}", "source": src}, self.db)
+
+        mix = {d["source"]: d["count"] for d in get_portal_mix(self.db)}
+        self.assertEqual(mix["greenhouse"], 2)
+        self.assertEqual(mix["lever"], 1)
+        self.assertEqual(mix["ashby"], 1)
+
+    def test_get_portal_mix_pct_sums_to_100(self):
+        for src in ["a", "b", "c", "d"]:
+            insert_job({"title": "T", "company": src, "url": f"https://{src}.com", "source": src}, self.db)
+        mix = get_portal_mix(self.db)
+        total_pct = sum(d["pct"] for d in mix)
+        self.assertAlmostEqual(total_pct, 100, delta=2)  # rounding tolerance
+
+    def test_get_stats_counts(self):
+        j1 = insert_job({"title": "A", "company": "X", "url": "https://a.com"}, self.db)
+        j2 = insert_job({"title": "B", "company": "Y", "url": "https://b.com"}, self.db)
+        mark_processed(j1, "/tmp/a.pdf", 90.0, "ready", self.db)
+        mark_applied(j1, "app-999", self.db)
+
+        stats = get_stats(self.db)
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["applied"], 1)
 
 
 if __name__ == "__main__":

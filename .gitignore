@@ -1,1 +1,57 @@
+# Environment
+.env
+*.env
+
+# Database (runtime artifact)
+job-agent/db/jobs.db
+
+# Generated PDFs
+job-agent/resumes/
+job-agent/resumes/*_preview.jpg
+
+# Logs
+*.log
+job-agent/agent.log
+
+# Google / Gmail OAuth tokens (sensitive)
+gmail-token.json
+*-token.json
+*-service-account*.json
+credentials.json
+token.json
+secrets*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# LaTeX build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.bbl
+*.blg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
 .DS_Store

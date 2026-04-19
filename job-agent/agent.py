@@ -49,7 +49,7 @@ logger = logging.getLogger("agent")
 from pipeline.dedup import (
     init_db, is_duplicate, insert_job,
     get_unprocessed_jobs, mark_processed, get_todays_processed_jobs,
-    set_cover_letter,
+    set_cover_letter, insert_recruiter,
 )
 from pipeline.jd_extractor import extract_jd_text, extract_min_years
 from pipeline.tailor_resume import tailor_resume
@@ -339,6 +339,7 @@ def process_job(job: dict) -> bool:
         recruiter_info = find_recruiter(company, title, job.get("url", ""))
         if recruiter_info and recruiter_info.get("name"):
             cold_email = draft_cold_email(recruiter_info, job)
+            insert_recruiter(job_id, recruiter_info, cold_email, DB_PATH)
     except Exception as e:
         logger.warning("Recruiter finder failed for job #%d: %s", job_id, e)
 
