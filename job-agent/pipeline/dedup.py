@@ -65,6 +65,7 @@ _MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
     "ALTER TABLE jobs ADD COLUMN application_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
+    "ALTER TABLE jobs ADD COLUMN fit_reason TEXT",
 ]
 
 
@@ -166,6 +167,15 @@ def set_cover_letter(job_id: int, cover_letter: str, db_path: str = DB_PATH) -> 
         conn.execute(
             "UPDATE jobs SET cover_letter = ? WHERE id = ?",
             (cover_letter, job_id),
+        )
+
+
+def set_fit_reason(job_id: int, reason: str, db_path: str = DB_PATH) -> None:
+    """Store the LLM fit-filter reason for a skipped job."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET fit_reason = ? WHERE id = ?",
+            (reason, job_id),
         )
 
 

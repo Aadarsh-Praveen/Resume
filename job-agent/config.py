@@ -52,10 +52,36 @@ INDEED_MAX_RESULTS = 25   # entries per RSS feed
 
 # ── LinkedIn direct search queries ────────────────────────────────────────────
 LINKEDIN_QUERIES = [
-    {"keywords": "data scientist", "location": "United States"},
-    {"keywords": "machine learning engineer", "location": "United States"},
-    {"keywords": "AI engineer", "location": "United States"},
+    # ── Data science ─────────────────────────────────────────────────────────
+    {"keywords": "data scientist",                       "location": "United States"},
+    {"keywords": "senior data scientist",                "location": "United States"},
+    {"keywords": "staff data scientist",                 "location": "United States"},
+    {"keywords": "data science manager",                 "location": "United States"},
+    # ── ML / AI engineering ───────────────────────────────────────────────────
+    {"keywords": "machine learning engineer",            "location": "United States"},
+    {"keywords": "senior machine learning engineer",     "location": "United States"},
+    {"keywords": "ml engineer",                          "location": "United States"},
+    {"keywords": "ai engineer",                          "location": "United States"},
+    {"keywords": "senior ai engineer",                   "location": "United States"},
+    # ── Applied / research ────────────────────────────────────────────────────
+    {"keywords": "applied scientist",                    "location": "United States"},
+    {"keywords": "research scientist machine learning",  "location": "United States"},
+    {"keywords": "nlp engineer",                         "location": "United States"},
+    {"keywords": "deep learning engineer",               "location": "United States"},
+    {"keywords": "llm engineer",                         "location": "United States"},
+    # ── Remote variants ───────────────────────────────────────────────────────
+    {"keywords": "data scientist",                       "location": "Remote"},
+    {"keywords": "machine learning engineer",            "location": "Remote"},
+    {"keywords": "ai engineer",                          "location": "Remote"},
+    # ── Top hubs (some companies post only to metro pages) ────────────────────
+    {"keywords": "data scientist",                       "location": "San Francisco Bay Area"},
+    {"keywords": "machine learning engineer",            "location": "New York City Metropolitan Area"},
+    {"keywords": "data scientist",                       "location": "Seattle, Washington"},
 ]
+
+LINKEDIN_MAX_PAGES   = 4    # pages per query (25 results/page = up to 100 jobs/query)
+LINKEDIN_PAGE_DELAY  = 2.0  # seconds between page requests within a query
+LINKEDIN_QUERY_DELAY = 3.0  # seconds between queries
 
 # ── Target companies for Greenhouse / Lever / Ashby APIs ─────────────────────
 # Format: { "slug": {"ats": "greenhouse|lever|ashby|bamboohr", "name": "Display Name"} }
