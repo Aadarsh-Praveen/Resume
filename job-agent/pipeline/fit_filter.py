@@ -27,9 +27,14 @@ _SYSTEM = """\
 You are a job-fit screener. Given a job description and a candidate profile,
 decide whether the candidate meets the MINIMUM (not preferred) requirements.
 
-Be pragmatic: 3 years experience can stretch to roles requiring "3-5 years".
-Only hard-block when the JD uses unambiguous language: "required", "must have",
-"minimum X years", "PhD required", "active clearance required".
+Rules (apply in order):
+1. HARD SKIP if min years required > candidate years + 2. A candidate with 3 years cannot
+   apply to a role requiring 6+, 8+, 10+ years. No exceptions.
+2. HARD SKIP if the JD requires a PhD and candidate has none.
+3. HARD SKIP if the JD requires active security clearance.
+4. HARD SKIP if the JD requires team/people management ("lead a team of X", "manage engineers").
+5. Small stretch is OK: 3 years can apply to "3-5 years" or "up to 5 years preferred" roles.
+   Only stretch when the word "preferred" or "nice to have" is used, NOT "required"/"must".
 
 Respond ONLY with a JSON object — no markdown, no explanation:
 {
@@ -89,6 +94,15 @@ def assess_fit(jd_text: str, client: Optional[anthropic.Anthropic] = None, years
 
     if client is None:
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    # Fast pre-check: regex for obvious year overrequirements before calling Haiku
+    yr_matches = re.findall(r'(\d+)\+?\s*years?\s+(?:of\s+)?(?:relevant\s+)?(?:engineering\s+|work\s+)?experience', jd_text[:3000], re.IGNORECASE)
+    if yr_matches:
+        max_required = max(int(y) for y in yr_matches)
+        if max_required > years_experience + 2:
+            reason = f"requires {max_required}+ years, candidate has {years_experience}"
+            logger.info("Fit filter fast-skip (regex): %s", reason)
+            return {"skip": True, "reason": reason, "min_years": max_required}
 
     try:
         msg = client.messages.create(
