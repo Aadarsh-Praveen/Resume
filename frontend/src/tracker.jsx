@@ -183,13 +183,19 @@ const TrackerView = () => {
   const [toast, setToast]     = useStateT('');
   const [appFilter, setAppFilter] = useStateT('all');
 
-  useEffectT(() => {
+  const loadData = () => {
     const api = window.__API__;
-    setLoading(true);
     Promise.all([api.appliedRows(), api.preparedRows()])
       .then(([a, p]) => { setAppliedRows(a); setPreparedRows(p); })
       .catch(console.warn)
       .finally(() => setLoading(false));
+  };
+
+  useEffectT(() => {
+    setLoading(true);
+    loadData();
+    const interval = setInterval(loadData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const rows = tab === 'applied' ? appliedRows : preparedRows;

@@ -16,6 +16,7 @@
   function fmtDate(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
     const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const pad = n => String(n).padStart(2, '0');
     return `${m[d.getMonth()]} ${pad(d.getDate())}, ${d.getFullYear()}`;
@@ -24,6 +25,7 @@
   function fmtDateTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
     const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const pad = n => String(n).padStart(2, '0');
     return `${m[d.getMonth()]} ${pad(d.getDate())}, ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -50,7 +52,7 @@
 
   function mapJobToRow(job) {
     const isApplied = job.approval_status === 'applied';
-    const isPrepared = job.approval_status === 'pending_review' || job.processed === 1;
+    const isPrepared = job.processed === 1;
     const pdfFile = job.pdf_path ? job.pdf_path.split('/').pop() : null;
     return {
       id: (isApplied ? 'APP-' : 'RES-') + job.id,
@@ -111,7 +113,7 @@
 
     async preparedRows() {
       const jobs = await apiFetch('/api/jobs?approval_status=pending_review&limit=500');
-      return jobs.map(mapJobToRow);
+      return jobs.filter(j => j.processed === 1).map(mapJobToRow);
     },
 
     async recruiters() {
