@@ -123,7 +123,7 @@ def get_fill_percentage(pdf_path: str) -> float:
     Estimate how full a single-page PDF is (0.0–1.0).
 
     Uses pdftotext to count non-empty lines on the first page.
-    A dense A4 resume at 10pt fills ~55 lines; we treat 50+ as "full".
+    A dense A4 resume at 10pt with 0.20in margins fills ~45 lines; we treat 45+ as "full".
     Returns 1.0 if pdftotext is unavailable (assume full → don't expand).
     """
     try:
@@ -134,8 +134,8 @@ def get_fill_percentage(pdf_path: str) -> float:
             timeout=10,
         )
         lines = [ln for ln in result.stdout.split("\n") if ln.strip()]
-        # 50 non-empty lines ≈ full page; clamp to [0, 1]
-        fill = min(len(lines) / 50.0, 1.0)
+        # 45 non-empty lines ≈ full page at 0.20in margins; clamp to [0, 1]
+        fill = min(len(lines) / 45.0, 1.0)
         logger.debug("Fill estimate: %d lines → %.0f%%", len(lines), fill * 100)
         return fill
     except Exception as e:

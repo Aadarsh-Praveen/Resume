@@ -190,8 +190,8 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
                         "type": "text",
                         "text": (
                             "This is a rendered resume page. Answer with one word only:\n"
-                            "- FULL: content reaches within ~5% of the bottom margin, no overflow\n"
-                            "- SHORT: large whitespace gap at the bottom (more than 10% of page empty)\n"
+                            "- FULL: content reaches within ~2% of the bottom margin, no overflow\n"
+                            "- SHORT: any visible whitespace gap at the bottom (more than 5% of page height empty)\n"
                             "- OVERFLOW: content is cut off or text runs off the page\n"
                             "Reply with exactly one word: FULL, SHORT, or OVERFLOW"
                         ),
@@ -272,6 +272,7 @@ def tailor_resume(
     prompt = _build_tailoring_prompt(base_tex, jd_text, include_certs)
     tex_content = _extract_tex(_call_claude(prompt, client))
     tex_content = sanitise_latex(tex_content)
+    tex_content = adjust_margin(tex_content, 0.20)  # uniform 0.20in all sides from the start
 
     # ── Step 2: Compile loop with LaTeX error retries ─────────────────────────
     for compile_attempt in range(MAX_RETRIES + 1):
@@ -327,6 +328,7 @@ def tailor_resume(
         trim_prompt = _build_trim_prompt(tex_content, pages)
         tex_content = _extract_tex(_call_claude(trim_prompt, client))
         tex_content = sanitise_latex(tex_content)
+        tex_content = adjust_margin(tex_content, 0.20)  # re-lock margins after trim
 
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
