@@ -320,7 +320,7 @@ TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist
   Summary: exactly 3 sentences, 3 lines.
   Skills: exactly 4 categories, 6–7 tools each.
 
-  These targets are calibrated to fill exactly 1 A4 page at 10pt with 0.20in margins on all sides.
+  These targets are calibrated to fill exactly 1 A4 page at 10pt with 0.25in margins on all sides.
   Do NOT deviate from these counts — deviating causes under- or over-fill.
 
 ━━ BULLET STRUCTURE ━━
