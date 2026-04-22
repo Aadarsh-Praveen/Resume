@@ -332,6 +332,8 @@ Rules:
   • Outcome-first, method-second — always
   • At least one hard metric per bullet (%, ms, $, scale, accuracy, users)
   • Show specific tools — no generic verbs without a named technology
+  • No widow lines: if a bullet wraps to 2 lines, the second line must contain
+    at least 8 words. Rephrase or extend the bullet to avoid 2–5 word orphan endings.
 
 ━━ LAYOUT ANTI-PATTERNS — NEVER DO ANY OF THESE ━━
   • NEVER use negative \\vspace anywhere (e.g. \\vspace{-11pt}, \\vspace{-8pt})
