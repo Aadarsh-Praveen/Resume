@@ -50,7 +50,7 @@ jobs:
           GMAIL_CREDENTIALS_JSON: ${{ secrets.GMAIL_CREDENTIALS_JSON }}
           SHEETS_CREDENTIALS_JSON: ${{ secrets.SHEETS_CREDENTIALS_JSON }}
           SHEETS_SPREADSHEET_ID:  ${{ secrets.SHEETS_SPREADSHEET_ID }}
-          DB_PATH:                db/jobs.db
+          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
           RESUMES_DIR:            resumes
 
       - name: Upload logs on failure

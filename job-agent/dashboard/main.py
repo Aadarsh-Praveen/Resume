@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
@@ -35,10 +35,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv()
 
 from pipeline.dedup import (
-    init_db, get_job, get_all_jobs, get_pending_review_jobs,
+    init_db, get_job, get_job_pdf_bytes, get_all_jobs, get_pending_review_jobs,
     get_stats, set_approval, mark_applied,
     get_all_recruiters, get_recruiter_stats,
     get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
+    _USE_PG,
 )
 from pipeline.auto_apply import apply_job
 
@@ -180,15 +181,27 @@ async def api_run(request: Request):
 @app.get("/job/{job_id}/resume")
 async def serve_resume(job_id: int):
     job = get_job(job_id, DB_PATH)
-    if not job or not job.get("pdf_path"):
-        raise HTTPException(404, "Resume not found")
-    pdf_path = job["pdf_path"]
-    if not os.path.exists(pdf_path):
-        raise HTTPException(404, f"PDF file missing: {pdf_path}")
-    return FileResponse(
-        pdf_path, media_type="application/pdf",
-        filename=f"{job['company']}_{job['title']}.pdf".replace(" ", "_"),
-    )
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    filename = f"{job['company']}_{job['title']}.pdf".replace(" ", "_")
+
+    # PostgreSQL: serve from DB bytes
+    if _USE_PG:
+        pdf_bytes = get_job_pdf_bytes(job_id)
+        if not pdf_bytes:
+            raise HTTPException(404, "Resume not stored in database yet")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
+    # SQLite (local): serve from filesystem
+    pdf_path = job.get("pdf_path")
+    if not pdf_path or not os.path.exists(pdf_path):
+        raise HTTPException(404, "PDF file not found")
+    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
 
 
 # ── Serve React frontend ───────────────────────────────────────────────────────
