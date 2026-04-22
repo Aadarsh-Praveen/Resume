@@ -25,12 +25,16 @@ const App = () => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // Load profile + stats after login
+  // Load profile + stats after login; refresh stats every 30s
   useEffectApp(() => {
     if (!authed) return;
     const api = window.__API__;
     api.profile().then(setProfile).catch(console.warn);
-    api.stats().then(setStats).catch(console.warn);
+    const refreshStats = () => {
+      api.stats().then(setStats).catch(console.warn);
+    };
+    refreshStats();
+    const statsInterval = setInterval(refreshStats, 30000);
     api.recentJobs(5).then(jobs => {
       setActivity(jobs.map(j => ({
         type: j.approval_status === 'applied' ? 'applied' : 'resume',
@@ -43,6 +47,7 @@ const App = () => {
         icon: j.approval_status === 'applied' ? 'check' : 'file',
       })));
     }).catch(console.warn);
+    return () => clearInterval(statsInterval);
   }, [authed]);
 
   // Tweaks bridge

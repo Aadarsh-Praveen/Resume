@@ -71,7 +71,7 @@
       notified: false,
       resume: pdfFile || '—',
       hasPdf: !!pdfFile,
-      manualReview: false,
+      manualReview: !!job.manual_review,
       status: isApplied ? 'Applied' : isPrepared ? 'Resume Ready' : 'Drafting',
       appStatus: 'Pending',
     };
@@ -80,6 +80,7 @@
   function mapRecruiter(r) {
     return {
       id: 'REC-' + r.id,
+      dbId: r.id,
       name: r.name || 'Unknown',
       company: r.company || '—',
       companyDomain: '',

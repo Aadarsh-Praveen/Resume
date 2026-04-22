@@ -1,15 +1,25 @@
 // Recruiters page
 const { useState: useStateR, useMemo: useMemoR, useEffect: useEffectR } = React;
 
-const SentPill = ({ sent }) => (
-  <span className={`pill ${sent ? 'success' : 'warn'}`}>
+const SentPill = ({ sent, onToggle }) => (
+  <button
+    className={`pill ${sent ? 'success' : 'warn'}`}
+    onClick={onToggle}
+    style={{ border: 'none', cursor: 'pointer', background: 'transparent', padding: 0, font: 'inherit' }}
+    title={sent ? 'Click to mark as not sent' : 'Click to mark as sent'}
+  >
     <span className="pill-dot"></span>{sent ? 'Sent' : 'Not sent'}
-  </span>
+  </button>
 );
-const YesNoReplied = ({ yes }) => (
-  <span className={`pill ${yes ? 'success' : ''}`}>
+const YesNoReplied = ({ yes, onToggle }) => (
+  <button
+    className={`pill ${yes ? 'success' : ''}`}
+    onClick={onToggle}
+    style={{ border: 'none', cursor: 'pointer', background: 'transparent', padding: 0, font: 'inherit' }}
+    title={yes ? 'Click to mark as not replied' : 'Click to mark as replied'}
+  >
     <span className="pill-dot"></span>{yes ? 'Yes' : 'No'}
-  </span>
+  </button>
 );
 const ViaPill = ({ via }) => {
   if (!via || via === '—') return <span style={{ color: 'var(--text-3)' }}>—</span>;
@@ -48,6 +58,27 @@ const RecruitersView = () => {
       .catch(console.warn)
       .finally(() => setLoading(false));
   }, []);
+
+  // fieldMap: DB field name → row key
+  const _fieldMap = { email_sent: 'cold', linkedin_sent: 'linkedinMsg', replied: 'replied' };
+
+  const handleToggle = async (dbId, field) => {
+    const rowKey = _fieldMap[field];
+    // Optimistic update
+    setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !r[rowKey] } : r));
+    try {
+      const res = await fetch(
+        `${window.__API__.base}/api/recruiters/${dbId}/toggle/${field}`,
+        { method: 'POST' }
+      );
+      if (!res.ok) throw new Error('failed');
+      const data = await res.json();
+      setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !!data.value } : r));
+    } catch {
+      // Revert
+      setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !r[rowKey] } : r));
+    }
+  };
 
   const companies = useMemoR(() => ['all', ...Array.from(new Set(rows.map(r => r.company)))], [rows]);
 
@@ -167,9 +198,9 @@ const RecruitersView = () => {
                           </a>
                         ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
-                      <td><SentPill sent={r.cold} /></td>
-                      <td><SentPill sent={r.linkedinMsg} /></td>
-                      <td><YesNoReplied yes={r.replied} /></td>
+                      <td><SentPill sent={r.cold}       onToggle={() => handleToggle(r.dbId, 'email_sent')} /></td>
+                      <td><SentPill sent={r.linkedinMsg} onToggle={() => handleToggle(r.dbId, 'linkedin_sent')} /></td>
+                      <td><YesNoReplied yes={r.replied}  onToggle={() => handleToggle(r.dbId, 'replied')} /></td>
                       <td><ViaPill via={r.repliedIn} /></td>
                     </tr>
                   );

@@ -234,13 +234,13 @@ const TrackerView = () => {
     setSelected(null);
     try {
       const res = await fetch(`${window.__API__.base}/api/approve/${row.dbId}`, { method: 'POST' });
+      if (!res.ok) { flash('Approve failed — server error.'); return; }
       const data = await res.json();
+      // Remove from prepared, move to applied immediately
       setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
-      if (data.status === 'applied') {
-        flash(`Applied to ${row.company}!`);
-      } else {
-        flash(`Approved — submit manually.`);
-      }
+      const appliedRow = { ...row, id: 'APP-' + row.dbId, status: 'Applied', appStatus: 'Pending' };
+      setAppliedRows(prev => [appliedRow, ...prev]);
+      flash(data.status === 'applied' ? `Applied to ${row.company}! See Applied tab.` : `Approved — submit manually. See Applied tab.`);
     } catch {
       flash('Approve failed — check server.');
     }
@@ -250,7 +250,8 @@ const TrackerView = () => {
     flash(`Rejecting ${row.company}…`);
     setSelected(null);
     try {
-      await fetch(`${window.__API__.base}/api/reject/${row.dbId}`, { method: 'POST' });
+      const res = await fetch(`${window.__API__.base}/api/reject/${row.dbId}`, { method: 'POST' });
+      if (!res.ok) { flash('Reject failed — server error.'); return; }
       setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
       flash(`Rejected ${row.company}.`);
     } catch {
@@ -267,11 +268,23 @@ const TrackerView = () => {
     }
   };
 
-  const handleToggleReview = (row) => {
-    const updater = rows.map(r => r.id === row.id ? { ...r, manualReview: !r.manualReview } : r);
-    if (tab === 'applied') setAppliedRows(updater);
-    else setPreparedRows(updater);
-    if (selected && selected.id === row.id) setSelected({ ...row, manualReview: !row.manualReview });
+  const handleToggleReview = async (row) => {
+    const newVal = !row.manualReview;
+    const update = r => r.id === row.id ? { ...r, manualReview: newVal } : r;
+    // Optimistic update
+    if (tab === 'applied') setAppliedRows(prev => prev.map(update));
+    else setPreparedRows(prev => prev.map(update));
+    if (selected && selected.id === row.id) setSelected({ ...row, manualReview: newVal });
+    try {
+      const res = await fetch(`${window.__API__.base}/api/jobs/${row.dbId}/toggle_review`, { method: 'POST' });
+      if (!res.ok) throw new Error('failed');
+    } catch {
+      // Revert on error
+      const revert = r => r.id === row.id ? { ...r, manualReview: row.manualReview } : r;
+      if (tab === 'applied') setAppliedRows(prev => prev.map(revert));
+      else setPreparedRows(prev => prev.map(revert));
+      if (selected && selected.id === row.id) setSelected(row);
+    }
   };
 
   const emptyMsg = loading

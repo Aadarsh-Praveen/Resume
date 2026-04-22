@@ -36,8 +36,8 @@ load_dotenv()
 
 from pipeline.dedup import (
     init_db, get_job, get_job_pdf_bytes, get_all_jobs, get_pending_review_jobs,
-    get_stats, set_approval, mark_applied,
-    get_all_recruiters, get_recruiter_stats,
+    get_stats, set_approval, mark_applied, set_manual_review,
+    get_all_recruiters, get_recruiter_stats, get_recruiter, update_recruiter,
     get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
     _USE_PG,
 )
@@ -134,6 +134,29 @@ async def api_funnel():
 @app.get("/api/analytics/portals")
 async def api_portals():
     return JSONResponse(get_portal_mix(db_path=DB_PATH))
+
+
+@app.post("/api/jobs/{job_id}/toggle_review")
+async def api_toggle_review(job_id: int):
+    job = get_job(job_id, DB_PATH)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    new_val = not bool(job.get("manual_review", 0))
+    set_manual_review(job_id, new_val, DB_PATH)
+    return JSONResponse({"manual_review": new_val})
+
+
+@app.post("/api/recruiters/{recruiter_id}/toggle/{field}")
+async def api_recruiter_toggle(recruiter_id: int, field: str):
+    allowed = {"email_sent", "linkedin_sent", "replied"}
+    if field not in allowed:
+        raise HTTPException(400, f"Field '{field}' is not toggleable")
+    rec = get_recruiter(recruiter_id, DB_PATH)
+    if not rec:
+        raise HTTPException(404, "Recruiter not found")
+    new_val = 0 if rec.get(field) else 1
+    update_recruiter(recruiter_id, field, new_val, DB_PATH)
+    return JSONResponse({"field": field, "value": new_val})
 
 
 @app.post("/api/approve/{job_id}")

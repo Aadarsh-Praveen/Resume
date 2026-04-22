@@ -110,6 +110,7 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN application_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
     "ALTER TABLE jobs ADD COLUMN fit_reason TEXT",
+    "ALTER TABLE jobs ADD COLUMN manual_review INTEGER NOT NULL DEFAULT 0",
 ]
 
 # PostgreSQL: ADD COLUMN IF NOT EXISTS is idempotent (PG 9.6+)
@@ -122,6 +123,7 @@ _MIGRATIONS_PG = [
     "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS fit_reason TEXT",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manual_review INTEGER NOT NULL DEFAULT 0",
 ]
 
 
@@ -325,6 +327,11 @@ def get_job(job_id: int, db_path: str = DB_PATH) -> Optional[dict]:
         return _one(_x(c, "SELECT * FROM jobs WHERE id = ?", (job_id,)))
 
 
+def set_manual_review(job_id: int, value: bool, db_path: str = DB_PATH) -> None:
+    with _conn() as c:
+        _x(c, "UPDATE jobs SET manual_review = ? WHERE id = ?", (1 if value else 0, job_id))
+
+
 def get_job_pdf_bytes(job_id: int) -> Optional[bytes]:
     """Fetch the raw PDF bytes for a job (PostgreSQL only; returns None for SQLite)."""
     if not _USE_PG:
@@ -399,6 +406,12 @@ def insert_recruiter(
                 now,
             ),
         )
+
+
+def get_recruiter(recruiter_id: int, db_path: str = DB_PATH) -> Optional[dict]:
+    """Fetch a single recruiter by id."""
+    with _conn() as c:
+        return _one(_x(c, "SELECT * FROM recruiters WHERE id = ?", (recruiter_id,)))
 
 
 def get_all_recruiters(
