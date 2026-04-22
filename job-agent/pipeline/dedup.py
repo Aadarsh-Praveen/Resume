@@ -133,8 +133,21 @@ _MIGRATIONS_PG = [
 def _conn():
     """Yield an open DB connection; commit on success, rollback + close on error."""
     if _USE_PG:
-        import psycopg2
-        c = psycopg2.connect(DATABASE_URL)
+        from urllib.parse import urlparse
+        import ssl
+        import pg8000.dbapi
+        p = urlparse(DATABASE_URL)
+        kwargs = {
+            "host":     p.hostname,
+            "port":     p.port or 5432,
+            "database": p.path.lstrip("/"),
+            "user":     p.username,
+            "password": p.password,
+        }
+        # Neon and most cloud PG require SSL
+        if "sslmode=require" in DATABASE_URL or (p.hostname and "neon" in p.hostname):
+            kwargs["ssl_context"] = ssl.create_default_context()
+        c = pg8000.dbapi.connect(**kwargs)
     else:
         if DB_PATH != ":memory:":
             parent = os.path.dirname(DB_PATH)
