@@ -52,7 +52,7 @@
 
   function mapJobToRow(job) {
     const appStatus = job.approval_status || 'pending_review';
-    const isApplied = appStatus === 'applied';
+    const isApplied  = appStatus === 'applied' || appStatus === 'approved';
     const isRejected = appStatus === 'rejected';
     const pdfFile = job.pdf_path ? job.pdf_path.split('/').pop() : null;
     const dbStatus = job.status || '';
