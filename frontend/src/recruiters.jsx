@@ -21,10 +21,23 @@ const YesNoReplied = ({ yes, onToggle }) => (
     <span className="pill-dot"></span>{yes ? 'Yes' : 'No'}
   </button>
 );
-const ViaPill = ({ via }) => {
-  if (!via || via === '—') return <span style={{ color: 'var(--text-3)' }}>—</span>;
-  const cls = via === 'Both' ? 'accent' : via === 'LinkedIn' ? 'info' : 'success';
-  return <span className={`pill ${cls}`}><span className="pill-dot"></span>{via}</span>;
+const VIA_CYCLE = ['', 'LinkedIn', 'Mail', 'Both'];
+const ViaPill = ({ via, onCycle }) => {
+  const label = via && via !== '—' ? via : null;
+  const cls = via === 'Both' ? 'accent' : via === 'LinkedIn' ? 'info' : via === 'Mail' ? 'success' : '';
+  return (
+    <button
+      className={`pill ${cls}`}
+      onClick={onCycle}
+      style={{ border: 'none', cursor: 'pointer', background: 'transparent', padding: 0, font: 'inherit' }}
+      title="Click to cycle: LinkedIn → Mail → Both → clear"
+    >
+      {label
+        ? <><span className="pill-dot"></span>{label}</>
+        : <span style={{ color: 'var(--text-3)' }}>—</span>
+      }
+    </button>
+  );
 };
 
 const SortHeaderR = ({ label, k, sort, setSort }) => {
@@ -64,7 +77,6 @@ const RecruitersView = () => {
 
   const handleToggle = async (dbId, field) => {
     const rowKey = _fieldMap[field];
-    // Optimistic update
     setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !r[rowKey] } : r));
     try {
       const res = await fetch(
@@ -75,8 +87,24 @@ const RecruitersView = () => {
       const data = await res.json();
       setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !!data.value } : r));
     } catch {
-      // Revert
       setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, [rowKey]: !r[rowKey] } : r));
+    }
+  };
+
+  const handleCycleVia = async (dbId, currentVia) => {
+    const cur = currentVia && currentVia !== '—' ? currentVia : '';
+    const idx = VIA_CYCLE.indexOf(cur);
+    const next = VIA_CYCLE[(idx + 1) % VIA_CYCLE.length];
+    // Optimistic update
+    setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, repliedIn: next || '—' } : r));
+    try {
+      const res = await fetch(
+        `${window.__API__.base}/api/recruiters/${dbId}/set_replied_via`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ via: next }) }
+      );
+      if (!res.ok) throw new Error('failed');
+    } catch {
+      setRows(prev => prev.map(r => r.dbId === dbId ? { ...r, repliedIn: cur || '—' } : r));
     }
   };
 
@@ -201,7 +229,7 @@ const RecruitersView = () => {
                       <td><SentPill sent={r.cold}       onToggle={() => handleToggle(r.dbId, 'email_sent')} /></td>
                       <td><SentPill sent={r.linkedinMsg} onToggle={() => handleToggle(r.dbId, 'linkedin_sent')} /></td>
                       <td><YesNoReplied yes={r.replied}  onToggle={() => handleToggle(r.dbId, 'replied')} /></td>
-                      <td><ViaPill via={r.repliedIn} /></td>
+                      <td><ViaPill via={r.repliedIn} onCycle={() => handleCycleVia(r.dbId, r.repliedIn)} /></td>
                     </tr>
                   );
                 })}

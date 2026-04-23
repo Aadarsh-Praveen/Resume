@@ -177,18 +177,29 @@ async def api_recruiter_toggle(recruiter_id: int, field: str):
     return JSONResponse({"field": field, "value": new_val})
 
 
+@app.post("/api/recruiters/{recruiter_id}/set_replied_via")
+async def api_set_replied_via(recruiter_id: int, request: Request):
+    rec = get_recruiter(recruiter_id, DB_PATH)
+    if not rec:
+        raise HTTPException(404, "Recruiter not found")
+    body = await request.json()
+    via = body.get("via", "")
+    update_recruiter(recruiter_id, "replied_via", via or None, DB_PATH)
+    return JSONResponse({"replied_via": via})
+
+
 @app.post("/api/approve/{job_id}")
 async def api_approve(job_id: int):
     job = get_job(job_id, DB_PATH)
     if not job:
         raise HTTPException(404, "Job not found")
     success, application_id = apply_job(job)
+    # Always mark applied so the job stays in the Applied tab regardless
+    mark_applied(job_id, application_id if success else None, DB_PATH)
     if success:
-        mark_applied(job_id, application_id, DB_PATH)
         return JSONResponse({"status": "applied", "application_id": application_id})
     else:
-        set_approval(job_id, "approved", DB_PATH)
-        return JSONResponse({"status": "approved", "note": "auto-apply failed — marked approved for manual submit"})
+        return JSONResponse({"status": "approved", "note": "auto-apply failed — submit manually"})
 
 
 @app.post("/api/reject/{job_id}")
