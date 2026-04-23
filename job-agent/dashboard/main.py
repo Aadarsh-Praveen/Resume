@@ -36,7 +36,7 @@ load_dotenv()
 
 from pipeline.dedup import (
     init_db, get_job, get_job_pdf_bytes, get_all_jobs, get_pending_review_jobs,
-    get_stats, set_approval, mark_applied, set_manual_review,
+    get_stats, set_approval, mark_applied, set_manual_review, set_application_status,
     get_all_recruiters, get_recruiter_stats, get_recruiter, update_recruiter,
     get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
     _USE_PG,
@@ -152,6 +152,20 @@ async def api_funnel():
 @app.get("/api/analytics/portals")
 async def api_portals():
     return JSONResponse(get_portal_mix(db_path=DB_PATH))
+
+
+@app.post("/api/jobs/{job_id}/set_application_status")
+async def api_set_application_status(job_id: int, request: Request):
+    job = get_job(job_id, DB_PATH)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    body = await request.json()
+    status = body.get("status", "")
+    allowed = {"", "Interviewing", "Accepted", "Rejected"}
+    if status not in allowed:
+        raise HTTPException(400, f"Invalid status '{status}'")
+    set_application_status(job_id, status, DB_PATH)
+    return JSONResponse({"application_status": status})
 
 
 @app.post("/api/jobs/{job_id}/toggle_review")

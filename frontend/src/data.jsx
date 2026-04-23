@@ -100,7 +100,7 @@
       manualReview: !!job.manual_review,
       approvalStatus: appStatus,
       status: displayStatus,
-      appStatus: 'Pending',
+      appStatus: job.application_status || '',
     };
   }
 

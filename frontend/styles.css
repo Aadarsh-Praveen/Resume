@@ -643,6 +643,24 @@ table.data-table {
 .ats-ring .fg { transition: stroke .2s; }
 
 .resume-cell { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; }
+.app-status-sel {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 3px 22px 3px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  transition: border-color .15s;
+}
+.app-status-sel:hover { border-color: var(--accent); }
+.app-status-sel:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
 .dl-btn {
   width: 24px; height: 24px; border-radius: 6px;
   display: grid; place-items: center;

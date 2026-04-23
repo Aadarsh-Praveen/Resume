@@ -40,14 +40,23 @@ const StatusPill = ({ status }) => {
   return <span className={`pill ${map[status] || ''}`}><span className="pill-dot"></span>{status}</span>;
 };
 
-const AppStatusPill = ({ status }) => {
-  const map = {
-    'Accepted': 'success',
-    'Interviewing': 'accent',
-    'Rejected': 'danger',
-    'Pending': ''
-  };
-  return <span className={`pill ${map[status] || ''}`}><span className="pill-dot"></span>{status}</span>;
+const APP_STATUS_OPTS = ['', 'Interviewing', 'Accepted', 'Rejected'];
+const AppStatusSelect = ({ value, onChange }) => {
+  const colorMap = { Accepted: 'var(--success)', Interviewing: 'var(--accent)', Rejected: 'var(--danger)', '': 'var(--text-3)' };
+  return (
+    <select
+      className="app-status-sel"
+      value={value || ''}
+      onClick={e => e.stopPropagation()}
+      onChange={e => onChange(e.target.value)}
+      style={{ color: colorMap[value || ''], fontWeight: value ? 600 : 400 }}
+    >
+      <option value="">— None</option>
+      <option value="Interviewing">Interviewing</option>
+      <option value="Accepted">Accepted</option>
+      <option value="Rejected">Rejected</option>
+    </select>
+  );
 };
 
 const ManualAppliedPill = ({ applied }) => (
@@ -294,6 +303,23 @@ const TrackerView = () => {
     }
   };
 
+  const handleSetAppStatus = async (row, newStatus) => {
+    const update = r => r.dbId === row.dbId ? { ...r, appStatus: newStatus } : r;
+    setAppliedRows(prev => prev.map(update));
+    setPreparedRows(prev => prev.map(update));
+    try {
+      const res = await fetch(
+        `${window.__API__.base}/api/jobs/${row.dbId}/set_application_status`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) }
+      );
+      if (!res.ok) throw new Error('failed');
+    } catch {
+      const revert = r => r.dbId === row.dbId ? { ...r, appStatus: row.appStatus } : r;
+      setAppliedRows(prev => prev.map(revert));
+      setPreparedRows(prev => prev.map(revert));
+    }
+  };
+
   const handleToggleReview = async (row) => {
     const newVal = !row.manualReview;
     const update = r => r.id === row.id ? { ...r, manualReview: newVal } : r;
@@ -380,6 +406,7 @@ const TrackerView = () => {
                   <th>Resume</th>
                   <th>Manual Review</th>
                   <SortHeader label="Status"         k="status"       sort={sort} setSort={setSort} />
+                  <th>Application Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,6 +440,9 @@ const TrackerView = () => {
                       </button>
                     </td>
                     <td><StatusPill status={r.status} /></td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <AppStatusSelect value={r.appStatus} onChange={v => handleSetAppStatus(r, v)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -430,6 +460,7 @@ const TrackerView = () => {
                   <th>JD</th>
                   <th>Resume</th>
                   <SortHeader label="Status"           k="status"       sort={sort} setSort={setSort} />
+                  <th>Application Status</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -458,6 +489,9 @@ const TrackerView = () => {
                       ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
                     <td><StatusPill status={r.status} /></td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <AppStatusSelect value={r.appStatus} onChange={v => handleSetAppStatus(r, v)} />
+                    </td>
                     <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
                       {r.approvalStatus === 'pending_review' ? (
                         <>

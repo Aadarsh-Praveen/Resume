@@ -111,6 +111,7 @@ _MIGRATIONS_SQLITE = [
     "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
     "ALTER TABLE jobs ADD COLUMN fit_reason TEXT",
     "ALTER TABLE jobs ADD COLUMN manual_review INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE jobs ADD COLUMN application_status TEXT",
 ]
 
 # PostgreSQL: ADD COLUMN IF NOT EXISTS is idempotent (PG 9.6+)
@@ -124,6 +125,7 @@ _MIGRATIONS_PG = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS fit_reason TEXT",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manual_review INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT",
 ]
 
 
@@ -343,6 +345,11 @@ def get_job(job_id: int, db_path: str = DB_PATH) -> Optional[dict]:
 def set_manual_review(job_id: int, value: bool, db_path: str = DB_PATH) -> None:
     with _conn() as c:
         _x(c, "UPDATE jobs SET manual_review = ? WHERE id = ?", (1 if value else 0, job_id))
+
+
+def set_application_status(job_id: int, status: str, db_path: str = DB_PATH) -> None:
+    with _conn() as c:
+        _x(c, "UPDATE jobs SET application_status = ? WHERE id = ?", (status or None, job_id))
 
 
 def get_job_pdf_bytes(job_id: int) -> Optional[bytes]:
