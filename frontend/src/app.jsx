@@ -5,7 +5,8 @@ const App = () => {
   const defaults = window.__TWEAKS__ || { theme: 'light', sidebarCollapsed: false };
   const saved = (() => { try { return JSON.parse(localStorage.getItem('applyflow_state') || '{}'); } catch { return {}; } })();
 
-  const [authed, setAuthed]                 = useStateApp(true); // local tool — no login needed
+  const [authed, setAuthed]                 = useStateApp(saved.authed === true);
+  const [authReady, setAuthReady]           = useStateApp(false);
   const [page, setPage]                     = useStateApp(saved.page || 'dashboard');
   const [theme, setTheme]                   = useStateApp(saved.theme || defaults.theme);
   const [sidebarCollapsed, setSidebarCollapsed] = useStateApp(saved.sidebarCollapsed ?? defaults.sidebarCollapsed);
@@ -15,6 +16,17 @@ const App = () => {
   const [profile, setProfile] = useStateApp(null);
   const [stats, setStats]     = useStateApp({ total: 0, pending: 0, applied: 0, rejected: 0 });
   const [activity, setActivity] = useStateApp([]);
+
+  // On first load: if not already authed, check whether a password is required.
+  // If no DASHBOARD_PASSWORD is set on the server, auto-login immediately.
+  useEffectApp(() => {
+    if (authed) { setAuthReady(true); return; }
+    fetch('/api/auth/check')
+      .then(r => r.json())
+      .then(d => { if (!d.required) setAuthed(true); })
+      .catch(() => setAuthed(true))   // server unreachable → allow through
+      .finally(() => setAuthReady(true));
+  }, []);
 
   // persist nav/theme
   useEffectApp(() => {
@@ -67,6 +79,8 @@ const App = () => {
   };
   const updateTheme   = (t) => { setTheme(t);   persistTweak({ theme: t }); };
   const updateSidebar = (c) => { setSidebarCollapsed(c); persistTweak({ sidebarCollapsed: c }); };
+
+  if (!authReady) return null; // brief flash-free wait while checking
 
   if (!authed) {
     return (

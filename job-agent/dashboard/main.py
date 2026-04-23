@@ -94,6 +94,24 @@ async def api_profile():
     })
 
 
+@app.get("/api/auth/check")
+async def api_auth_check():
+    """Returns whether a password is required."""
+    return JSONResponse({"required": bool(os.getenv("DASHBOARD_PASSWORD", ""))})
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    """Verify dashboard password. If DASHBOARD_PASSWORD not set, always succeeds."""
+    pwd = os.getenv("DASHBOARD_PASSWORD", "")
+    if not pwd:
+        return JSONResponse({"ok": True})
+    body = await request.json()
+    if body.get("password") == pwd:
+        return JSONResponse({"ok": True})
+    raise HTTPException(401, "Incorrect password")
+
+
 @app.get("/api/stats")
 async def api_stats():
     return JSONResponse(get_stats(DB_PATH))
