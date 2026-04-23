@@ -51,13 +51,17 @@
   // ── Mappers ─────────────────────────────────────────────────────────────────
 
   function mapJobToRow(job) {
-    const isApplied = job.approval_status === 'applied';
+    const appStatus = job.approval_status || 'pending_review';
+    const isApplied = appStatus === 'applied';
+    const isRejected = appStatus === 'rejected';
     const pdfFile = job.pdf_path ? job.pdf_path.split('/').pop() : null;
     const dbStatus = job.status || '';
 
     let displayStatus;
     if (isApplied) {
       displayStatus = 'Applied';
+    } else if (isRejected) {
+      displayStatus = 'Not Applied';
     } else if (dbStatus === 'ready') {
       displayStatus = 'Resume Ready';
     } else if (dbStatus === 'low_ats') {
@@ -94,6 +98,7 @@
       resume: pdfFile || '—',
       hasPdf: !!pdfFile,
       manualReview: !!job.manual_review,
+      approvalStatus: appStatus,
       status: displayStatus,
       appStatus: 'Pending',
     };
@@ -135,7 +140,7 @@
     },
 
     async preparedRows() {
-      const jobs = await apiFetch('/api/jobs?approval_status=pending_review&limit=500');
+      const jobs = await apiFetch('/api/jobs?limit=500');
       return jobs.filter(j => j.processed === 1).map(mapJobToRow);
     },
 

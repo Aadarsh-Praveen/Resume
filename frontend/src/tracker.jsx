@@ -35,7 +35,7 @@ const StatusPill = ({ status }) => {
     'No JD':         'danger',
     'Skipped':       'warn',
     'Drafting':      'info',
-    'Not Applied':   'warn',
+    'Not Applied':   'danger',
   };
   return <span className={`pill ${map[status] || ''}`}><span className="pill-dot"></span>{status}</span>;
 };
@@ -154,7 +154,7 @@ const Drawer = ({ row, kind, onClose, onDownload, onToggleReview, onApprove, onR
         </div>
         <div className="drawer-foot">
           <button className="btn btn-ghost" onClick={onClose}>Close</button>
-          {kind === 'prepared' && (
+          {kind === 'prepared' && row.approvalStatus === 'pending_review' && (
             <>
               <button className="btn btn-danger" onClick={() => onReject(row)}>
                 <Icon name="x" size={13} /> Reject
@@ -208,7 +208,7 @@ const TrackerView = () => {
   const portals  = useMemo(() => ['all', ...Array.from(new Set(rows.map(r => r.portal)))], [rows]);
   const statuses = tab === 'applied'
     ? ['all', 'Applied', 'Not Applied']
-    : ['all', 'Resume Ready', 'Low ATS', 'High ATS', 'Failed', 'No JD', 'Skipped', 'Drafting'];
+    : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'High ATS', 'Failed', 'No JD', 'Skipped'];
   const appStatuses = ['all', 'Pending', 'Interviewing', 'Accepted', 'Rejected'];
 
   const filtered = useMemo(() => {
@@ -239,16 +239,26 @@ const TrackerView = () => {
   const handleApprove = async (row) => {
     flash(`Approving ${row.company}…`);
     setSelected(null);
+    // Update in-place — row stays, status changes to Applied
+    const update = r => r.dbId === row.dbId ? { ...r, status: 'Applied', approvalStatus: 'applied' } : r;
+    setPreparedRows(prev => prev.map(update));
+    const appliedRow = { ...row, id: 'APP-' + row.dbId, status: 'Applied', approvalStatus: 'applied' };
+    setAppliedRows(prev => [appliedRow, ...prev]);
     try {
       const res = await fetch(`${window.__API__.base}/api/approve/${row.dbId}`, { method: 'POST' });
-      if (!res.ok) { flash('Approve failed — server error.'); return; }
-      const data = await res.json();
-      // Remove from prepared, move to applied immediately
-      setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
-      const appliedRow = { ...row, id: 'APP-' + row.dbId, status: 'Applied', appStatus: 'Pending' };
-      setAppliedRows(prev => [appliedRow, ...prev]);
-      flash(data.status === 'applied' ? `Applied to ${row.company}! See Applied tab.` : `Approved — submit manually. See Applied tab.`);
+      if (!res.ok) {
+        // Revert
+        const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
+        setPreparedRows(prev => prev.map(revert));
+        setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
+        flash('Approve failed — server error.');
+      } else {
+        flash(`Approved ${row.company} — marked as Applied.`);
+      }
     } catch {
+      const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
+      setPreparedRows(prev => prev.map(revert));
+      setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
       flash('Approve failed — check server.');
     }
   };
@@ -256,12 +266,21 @@ const TrackerView = () => {
   const handleReject = async (row) => {
     flash(`Rejecting ${row.company}…`);
     setSelected(null);
+    // Update in-place — row stays, status changes to Not Applied
+    const update = r => r.dbId === row.dbId ? { ...r, status: 'Not Applied', approvalStatus: 'rejected' } : r;
+    setPreparedRows(prev => prev.map(update));
     try {
       const res = await fetch(`${window.__API__.base}/api/reject/${row.dbId}`, { method: 'POST' });
-      if (!res.ok) { flash('Reject failed — server error.'); return; }
-      setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
-      flash(`Rejected ${row.company}.`);
+      if (!res.ok) {
+        const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
+        setPreparedRows(prev => prev.map(revert));
+        flash('Reject failed — server error.');
+      } else {
+        flash(`${row.company} marked as Not Applied.`);
+      }
     } catch {
+      const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
+      setPreparedRows(prev => prev.map(revert));
       flash('Reject failed — check server.');
     }
   };
@@ -298,7 +317,7 @@ const TrackerView = () => {
     ? 'Loading…'
     : tab === 'applied'
       ? 'No applied jobs yet — run the agent and approve some jobs.'
-      : 'No resumes prepared yet — run the agent to get started.';
+      : 'No jobs tracked yet — run the agent to get started.';
 
   return (
     <div data-screen-label="Tracker">
@@ -317,7 +336,7 @@ const TrackerView = () => {
         </button>
         <button className={tab === 'prepared' ? 'active' : ''} onClick={() => setTab('prepared')}>
           <Icon name="file" size={13} />
-          Resume Prepared Only
+          All Tracked Jobs
           <span className="tab-count">{preparedRows.length}</span>
         </button>
       </div>
@@ -440,12 +459,16 @@ const TrackerView = () => {
                     </td>
                     <td><StatusPill status={r.status} /></td>
                     <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => handleApprove(r)}>
-                        <Icon name="check" size={11} /> Apply
-                      </button>
-                      <button className="btn btn-sm btn-danger" onClick={() => handleReject(r)}>
-                        <Icon name="x" size={11} /> Reject
-                      </button>
+                      {r.approvalStatus === 'pending_review' ? (
+                        <>
+                          <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => handleApprove(r)}>
+                            <Icon name="check" size={11} /> Apply
+                          </button>
+                          <button className="btn btn-sm btn-danger" onClick={() => handleReject(r)}>
+                            <Icon name="x" size={11} /> Reject
+                          </button>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
