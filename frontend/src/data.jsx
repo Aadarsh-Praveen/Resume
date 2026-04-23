@@ -62,12 +62,10 @@
       displayStatus = 'Applied';
     } else if (isRejected) {
       displayStatus = 'Not Applied';
-    } else if (dbStatus === 'ready') {
+    } else if (dbStatus === 'ready' || dbStatus === 'high_ats') {
       displayStatus = 'Resume Ready';
     } else if (dbStatus === 'low_ats') {
       displayStatus = 'Low ATS';
-    } else if (dbStatus === 'high_ats') {
-      displayStatus = 'High ATS';
     } else if (dbStatus === 'failed') {
       displayStatus = 'Failed';
     } else if (dbStatus === 'jd_failed') {

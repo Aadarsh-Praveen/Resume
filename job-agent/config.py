@@ -33,7 +33,7 @@ YOE_MAX_FILTER = 5                 # skip jobs requiring more than 5 years
 
 # ── ATS quality gates ─────────────────────────────────────────────────────────
 ATS_SCORE_MIN = 89        # below this → retry with missing keyword injection
-ATS_SCORE_MAX = 95        # above this → flag for manual review (keyword stuffing risk)
+ATS_SCORE_MAX = 100       # no upper cap — higher score = better match, never block
 MAX_RETRIES = 3           # max Claude retries per quality gate failure
 MAX_PAGE_RETRIES = 2      # max retries for page count gate
 

@@ -30,7 +30,6 @@ const StatusPill = ({ status }) => {
     'Applied':       'success',
     'Resume Ready':  'success',
     'Low ATS':       'warn',
-    'High ATS':      'accent',
     'Failed':        'danger',
     'No JD':         'danger',
     'Skipped':       'warn',
@@ -217,7 +216,7 @@ const TrackerView = () => {
   const portals  = useMemo(() => ['all', ...Array.from(new Set(rows.map(r => r.portal)))], [rows]);
   const statuses = tab === 'applied'
     ? ['all', 'Applied', 'Not Applied']
-    : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'High ATS', 'Failed', 'No JD', 'Skipped'];
+    : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'Failed', 'No JD', 'Skipped'];
   const appStatuses = ['all', 'none', 'Interviewing', 'Accepted', 'Rejected'];
 
   const filtered = useMemo(() => {
