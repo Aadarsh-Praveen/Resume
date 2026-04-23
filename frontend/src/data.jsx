@@ -52,8 +52,30 @@
 
   function mapJobToRow(job) {
     const isApplied = job.approval_status === 'applied';
-    const isPrepared = job.processed === 1;
     const pdfFile = job.pdf_path ? job.pdf_path.split('/').pop() : null;
+    const dbStatus = job.status || '';
+
+    let displayStatus;
+    if (isApplied) {
+      displayStatus = 'Applied';
+    } else if (dbStatus === 'ready') {
+      displayStatus = 'Resume Ready';
+    } else if (dbStatus === 'low_ats') {
+      displayStatus = 'Low ATS';
+    } else if (dbStatus === 'high_ats') {
+      displayStatus = 'High ATS';
+    } else if (dbStatus === 'failed') {
+      displayStatus = 'Failed';
+    } else if (dbStatus === 'jd_failed') {
+      displayStatus = 'No JD';
+    } else if (dbStatus === 'skipped_unqualified' || dbStatus === 'skipped_irrelevant') {
+      displayStatus = 'Skipped';
+    } else if (job.processed === 1) {
+      displayStatus = 'Resume Ready';
+    } else {
+      displayStatus = 'Drafting';
+    }
+
     return {
       id: (isApplied ? 'APP-' : 'RES-') + job.id,
       dbId: job.id,
@@ -72,7 +94,7 @@
       resume: pdfFile || '—',
       hasPdf: !!pdfFile,
       manualReview: !!job.manual_review,
-      status: isApplied ? 'Applied' : isPrepared ? 'Resume Ready' : 'Drafting',
+      status: displayStatus,
       appStatus: 'Pending',
     };
   }

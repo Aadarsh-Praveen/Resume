@@ -27,10 +27,15 @@ const YesNoPill = ({ yes, labelYes='Sent', labelNo='Pending' }) => (
 
 const StatusPill = ({ status }) => {
   const map = {
-    'Applied': 'success',
-    'Not Applied': 'warn',
-    'Resume Ready': 'success',
-    'Drafting': 'info'
+    'Applied':       'success',
+    'Resume Ready':  'success',
+    'Low ATS':       'warn',
+    'High ATS':      'accent',
+    'Failed':        'danger',
+    'No JD':         'danger',
+    'Skipped':       'warn',
+    'Drafting':      'info',
+    'Not Applied':   'warn',
   };
   return <span className={`pill ${map[status] || ''}`}><span className="pill-dot"></span>{status}</span>;
 };
@@ -201,7 +206,9 @@ const TrackerView = () => {
   const rows = tab === 'applied' ? appliedRows : preparedRows;
 
   const portals  = useMemo(() => ['all', ...Array.from(new Set(rows.map(r => r.portal)))], [rows]);
-  const statuses = tab === 'applied' ? ['all', 'Applied', 'Not Applied'] : ['all', 'Resume Ready', 'Drafting'];
+  const statuses = tab === 'applied'
+    ? ['all', 'Applied', 'Not Applied']
+    : ['all', 'Resume Ready', 'Low ATS', 'High ATS', 'Failed', 'No JD', 'Skipped', 'Drafting'];
   const appStatuses = ['all', 'Pending', 'Interviewing', 'Accepted', 'Rejected'];
 
   const filtered = useMemo(() => {
