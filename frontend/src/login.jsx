@@ -34,25 +34,51 @@ const OtpInput = ({ otp, setOtp, cellRefs }) => {
   );
 };
 
-const LoginHero = () => (
-  <div className="login-hero">
-    <div className="login-hero-inner">
-      <div style={{ display:'flex', alignItems:'center', gap: 10, fontWeight: 600 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display:'grid', placeItems: 'center', fontSize: 14, fontWeight: 700 }}>A</div>
-        <span>Applyflow</span>
+const LoginHero = () => {
+  const [heroStats, setHeroStats] = React.useState(null);
+
+  React.useEffect(() => {
+    Promise.all([
+      window.__API__.stats().catch(() => null),
+      window.__API__.ats().catch(() => null),
+    ]).then(([stats, ats]) => {
+      if (!stats) return;
+      const avgAts = ats && ats.length
+        ? Math.round(ats.reduce((sum, b, _, arr) => {
+            const mid = { '< 60': 55, '60–69': 65, '70–79': 75, '80–89': 85, '90+': 93 };
+            return sum + (mid[b.label] || 75) * b.value;
+          }, 0) / Math.max(1, ats.reduce((s, b) => s + b.value, 0)))
+        : null;
+      setHeroStats({
+        applied: stats.applied || 0,
+        total: stats.total || 0,
+        avgAts,
+      });
+    });
+  }, []);
+
+  return (
+    <div className="login-hero">
+      <div className="login-hero-inner">
+        <div style={{ display:'flex', alignItems:'center', gap: 10, fontWeight: 600 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display:'grid', placeItems: 'center', fontSize: 14, fontWeight: 700 }}>A</div>
+          <span>Applyflow</span>
+        </div>
+        <div style={{ marginTop: 96 }}>
+          <h1>Your AI apply<br/>agent, organized.</h1>
+          <p>Applyflow tailors your resume, submits applications and tracks every outcome — so you can focus on interviews, not forms.</p>
+        </div>
       </div>
-      <div style={{ marginTop: 96 }}>
-        <h1>Your AI apply<br/>agent, organized.</h1>
-        <p>Applyflow tailors your resume, submits applications and tracks every outcome — so you can focus on interviews, not forms.</p>
-      </div>
+      {heroStats && (heroStats.total > 0 || heroStats.applied > 0) && (
+        <div className="hero-stat-grid">
+          <div className="hero-stat"><div className="hero-stat-num">{heroStats.total}</div><div className="hero-stat-lbl">jobs discovered</div></div>
+          <div className="hero-stat"><div className="hero-stat-num">{heroStats.applied}</div><div className="hero-stat-lbl">apps submitted</div></div>
+          {heroStats.avgAts && <div className="hero-stat"><div className="hero-stat-num">{heroStats.avgAts}</div><div className="hero-stat-lbl">avg ATS score</div></div>}
+        </div>
+      )}
     </div>
-    <div className="hero-stat-grid">
-      <div className="hero-stat"><div className="hero-stat-num">342</div><div className="hero-stat-lbl">apps submitted</div></div>
-      <div className="hero-stat"><div className="hero-stat-num">28%</div><div className="hero-stat-lbl">reply rate</div></div>
-      <div className="hero-stat"><div className="hero-stat-num">84</div><div className="hero-stat-lbl">avg ATS score</div></div>
-    </div>
-  </div>
-);
+  );
+};
 
 const LoginView = ({ onLogin }) => {
   const [mode, setMode] = useState('login'); // login | signup
@@ -151,7 +177,6 @@ const LoginView = ({ onLogin }) => {
             <div className="login-brand"><div className="login-brand-mark">A</div><span>Applyflow</span></div>
             <h2>Check your inbox</h2>
             <p className="login-form-sub">We sent a 6-digit code to <strong style={{ color:'var(--text)' }}>{email}</strong></p>
-            <div className="otp-notice"><Icon name="mail" size={16} /><span>Demo code: <strong>482 915</strong> — any 6 digits will work.</span></div>
             <label className="field-label">One-time code</label>
             <OtpInput otp={otp} setOtp={setOtp} cellRefs={cellRefs} />
             {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
@@ -231,7 +256,6 @@ const LoginView = ({ onLogin }) => {
             <div className="login-brand"><div className="login-brand-mark">A</div><span>Applyflow</span></div>
             <h2>Verify your {channel === 'email' ? 'email' : 'phone'}</h2>
             <p className="login-form-sub">We sent a 6-digit code to <strong style={{ color:'var(--text)' }}>{channel === 'email' ? form.email : form.phone}</strong></p>
-            <div className="otp-notice"><Icon name={channel === 'email' ? 'mail' : 'phone'} size={16} /><span>Demo code: <strong>482 915</strong> — any 6 digits will work.</span></div>
             <label className="field-label">One-time code</label>
             <OtpInput otp={otp} setOtp={setOtp} cellRefs={cellRefs} />
             {otpVerified && (
