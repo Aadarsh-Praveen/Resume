@@ -166,11 +166,11 @@ def _conn():
 
 
 def _x(c, sql: str, params=()):
-    """Execute SQL, normalising ? → %s for psycopg2. Returns the cursor."""
+    """Execute SQL, normalising ? → %s for pg8000. Returns the cursor."""
     if _USE_PG:
         sql = sql.replace("?", "%s")
         cur = c.cursor()
-        cur.execute(sql, params if params else None)
+        cur.execute(sql, list(params))   # pg8000 requires a list, never None
         return cur
     return c.execute(sql, params)
 
@@ -180,7 +180,7 @@ def _insert(c, sql: str, params) -> int:
     if _USE_PG:
         sql = sql.replace("?", "%s") + " RETURNING id"
         cur = c.cursor()
-        cur.execute(sql, params)
+        cur.execute(sql, list(params))   # pg8000 requires a list
         return cur.fetchone()[0]
     return c.execute(sql, params).lastrowid
 
@@ -211,11 +211,11 @@ def _one(cur) -> Optional[dict]:
 
 
 def _run_script(c, script: str):
-    """Execute a semicolon-delimited SQL script (psycopg2 has no executescript)."""
+    """Execute a semicolon-delimited SQL script (pg8000 has no executescript)."""
     if _USE_PG:
         cur = c.cursor()
         for stmt in [s.strip() for s in script.split(";") if s.strip()]:
-            cur.execute(stmt)
+            cur.execute(stmt, [])    # pg8000 requires a list, never bare None
     else:
         c.executescript(script)
 
