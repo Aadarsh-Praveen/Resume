@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Playwright browser (for CSRF Workday tenants)
+        run: python -m playwright install chromium --with-deps
+
       - name: Run agent
         run: |
           MODE="${{ github.event.inputs.mode || 'full' }}"
