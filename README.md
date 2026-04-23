@@ -1,29 +1,30 @@
 # Applyflow — AI Job Application Agent
 
-An automated pipeline that finds relevant job postings, tailors your resume for each one using Claude AI, enforces quality gates, tracks recruiters, and gives you a dashboard to approve applications before they're submitted.
+An automated pipeline that finds relevant job postings, tailors your resume for each one using Claude AI, enforces quality gates, tracks recruiters, and gives you a web dashboard to approve applications before anything is submitted.
 
 ---
 
-## What it does
+## How it works
 
 ```
 Job Sources → Deduplicate → Extract JD → LLM Fit Filter (Claude Haiku)
      → Tailor Resume (Claude Sonnet) → Compile PDF (pdflatex)
      → ATS Score Check → Find Recruiter → Dashboard Review
-     → Auto-Apply (Greenhouse / Lever) → Telegram Alert
+         ↓ You click Apply
+     Auto-Apply (Greenhouse / Lever) → Telegram Alert
 ```
 
-1. **Collects jobs** from 8 sources: Indeed RSS, Greenhouse (~75 companies), Lever (~25), Ashby (~35), Workday (NVIDIA + Apple/Salesforce/Tesla/AMD via CSRF), LinkedIn email alerts (Gmail), custom career pages (Google/Meta/Microsoft/Amazon), and **LinkedIn direct search** (20 queries × 4 pages × 25 results = up to 2,000 raw cards per run)
-2. **Filters** duplicates (SQLite), wrong roles, wrong location, and postings requiring more experience than you have
-3. **LLM fit screen** using Claude Haiku — reads the JD and skips jobs with hard blockers (PhD required, active security clearance, 8+ years minimum, team lead mandatory) before spending Sonnet tokens on tailoring
-4. **Rewrites your resume** using Claude (claude-sonnet-4-6) — emphasising relevant keywords from the JD without fabricating anything
-4. **Compiles the PDF** with `pdflatex` and enforces exactly 1 page (margin shrink + Claude Haiku visual validator)
-6. **Scores the PDF** against JD keywords (target: 89–95% ATS match)
-7. **Retries automatically** if the score is too low or the PDF overflows a page
-8. **Finds the recruiter** via Hunter.io and drafts a 3-sentence cold email via Claude
-9. **Dashboard** — review tailored resumes and approve/reject before any application is submitted
-10. **Auto-applies** to Greenhouse and Lever roles on approval
-11. **Sends a Telegram alert** with PDF preview, ATS score, and cold email draft
+**The agent never submits anything without your approval.** Every tailored resume sits in the dashboard waiting for you to click Apply or Reject.
+
+1. **Collects jobs** from 8 sources: LinkedIn direct search, LinkedIn Gmail alerts, Indeed RSS, Greenhouse (~75 companies), Lever (~25), Ashby (~35), Workday (NVIDIA, Apple, Salesforce, Tesla, AMD), and custom career pages (Google, Meta, Microsoft, Amazon)
+2. **Filters** duplicates, wrong roles, wrong location, and postings requiring more experience than you have
+3. **LLM fit screen** — Claude Haiku reads the JD and skips hard blockers (PhD required, 8+ years minimum, active clearance) before spending Sonnet tokens on tailoring
+4. **Rewrites your resume** using Claude Sonnet — emphasising relevant keywords from the JD without fabricating anything
+5. **Compiles the PDF** with `pdflatex` and enforces exactly 1 page
+6. **Scores the PDF** against JD keywords (target: 89–95% ATS match) and retries automatically if too low
+7. **Finds the recruiter** via Hunter.io and drafts a cold email via Claude
+8. **Sends a Telegram alert** with PDF preview, ATS score, and cold email draft
+9. **You approve** in the dashboard — auto-submits for Greenhouse/Lever, or gives you the link for everything else
 
 ---
 
@@ -35,11 +36,11 @@ Job Sources → Deduplicate → Extract JD → LLM Fit Filter (Claude Haiku)
 | `pdflatex` | Compile `.tex` → PDF | `sudo apt install texlive-latex-extra` |
 | `pdftotext` | Extract PDF text for ATS scoring | `sudo apt install poppler-utils` |
 | `pdfinfo` | Count PDF pages | Included with `poppler-utils` |
-| `pdftoppm` | Render PDF preview image for Telegram | Included with `poppler-utils` |
+| `pdftoppm` | Render PDF preview for Telegram | Included with `poppler-utils` |
 
 ---
 
-## Setup
+## Quick start (local)
 
 ### 1. Clone and install
 
@@ -47,32 +48,70 @@ Job Sources → Deduplicate → Extract JD → LLM Fit Filter (Claude Haiku)
 git clone https://github.com/aadarsh-praveen/resume.git
 cd resume/job-agent
 pip install -r requirements.txt
+playwright install chromium   # needed for CSRF-protected Workday tenants
 ```
 
 ### 2. Create your `.env` file
 
-```bash
-cp .env.example .env
+```env
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Applicant profile (used in auto-apply form submissions)
+APPLICANT_FIRST_NAME=Your
+APPLICANT_LAST_NAME=Name
+APPLICANT_EMAIL=you@example.com
+APPLICANT_PHONE=+1 555 000 0000
+APPLICANT_LINKEDIN_URL=https://linkedin.com/in/yourhandle
+APPLICANT_GITHUB=https://github.com/yourhandle
+APPLICANT_LOCATION=Boston, MA
+
+# Dashboard password (leave blank to disable auth)
+DASHBOARD_PASSWORD=yourpassword
+
+# Optional — Telegram alerts
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# Optional — recruiter finder
+HUNTER_API_KEY=
+
+# Optional — Gmail (LinkedIn alert emails)
+GMAIL_CREDENTIALS_PATH=credentials.json
+
+# Optional — Google Sheets logging
+SHEETS_CREDENTIALS_JSON=
+SHEETS_SPREADSHEET_ID=
+
+# Database — leave blank for local SQLite, set for PostgreSQL (Neon/Railway)
+DATABASE_URL=
+DB_PATH=db/jobs.db
+RESUMES_DIR=resumes
 ```
 
-Fill in each value — see the [API Keys](#api-keys) section below.
+### 3. Add your resume
 
-### 3. Add your base resume
+Replace `job-agent/base_resume.tex` with your own LaTeX resume. Keep it to **exactly 1 page**. This is the only file you edit when your experience changes — all future tailored resumes are generated from it.
 
-Replace `job-agent/base_resume.tex` with your own LaTeX resume. Keep it to **1 page**.
+```bash
+# After editing, verify it compiles and fits one page
+cd job-agent
+pdflatex base_resume.tex
+open base_resume.pdf
+```
 
 ### 4. Run the agent
 
 ```bash
 cd job-agent
 
-# One full cycle (collect + process all new jobs)
+# One full cycle (collect + tailor all new jobs)
 python agent.py
 
-# Run continuously on a schedule (every 4h + Gmail every 15min)
+# Run on a schedule (every 4h + Gmail every 15min)
 python agent.py --daemon
 
-# Collect jobs only (no tailoring yet)
+# Collect jobs only (no tailoring)
 python agent.py --collect
 
 # Process already-collected jobs
@@ -82,7 +121,7 @@ python agent.py --process
 python agent.py --test-job
 ```
 
-### 5. Run the dashboard
+### 5. Open the dashboard
 
 ```bash
 cd job-agent
@@ -92,67 +131,144 @@ uvicorn dashboard.main:app --reload --port 8000
 
 ---
 
-## API Keys
+## Updating your resume
 
-### Required
+Edit `job-agent/base_resume.tex` whenever you gain new experience, skills, or projects. Then:
 
-**`ANTHROPIC_API_KEY`** — Resume tailoring and cold email drafting.
-Get it at: `console.anthropic.com` → API Keys
-
-**`TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID`** — Where alerts are sent.
-1. Message `@BotFather` on Telegram → `/newbot` → copy the token
-2. Message your bot once, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` → find `"chat": {"id": ...}`
-
-### Strongly recommended
-
-**`HUNTER_API_KEY`** — Finds recruiter emails per company (Hunter.io free tier = 25 searches/month).
-
-### Optional
-
-**`GMAIL_CREDENTIALS_PATH`** — Parses LinkedIn job alert emails via Gmail API.
-1. Enable Gmail API at `console.cloud.google.com` → Create OAuth2 credentials (Desktop App) → download as `credentials.json`
-2. Run `python agent.py` locally once to complete OAuth
-
-**`SHEETS_CREDENTIALS_JSON` + `SHEETS_SPREADSHEET_ID`** — Logs applications to Google Sheets.
-
-**Applicant profile** (used in auto-apply form submissions):
+```bash
+cd job-agent
+pdflatex base_resume.tex          # verify it still compiles to 1 page
+git add base_resume.tex base_resume.pdf
+git commit -m "Update resume"
+git push origin main
 ```
-APPLICANT_NAME=
-APPLICANT_EMAIL=
-APPLICANT_PHONE=
-APPLICANT_LINKEDIN=
-APPLICANT_GITHUB=
+
+All future agent runs automatically use the updated resume. Existing tailored PDFs in the tracker are unaffected.
+
+---
+
+## Cloud deployment (Railway + Neon PostgreSQL)
+
+This gives you a publicly accessible dashboard and lets the agent run on a schedule via GitHub Actions.
+
+### Database — Neon PostgreSQL
+
+1. Create a free project at [neon.tech](https://neon.tech)
+2. Copy the connection string — looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`
+
+### Dashboard — Railway
+
+1. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub → select this repo
+2. Add these environment variables in Railway settings:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Neon connection string |
+| `DASHBOARD_PASSWORD` | Password to protect the dashboard |
+| `ANTHROPIC_API_KEY` | Claude API key |
+| `APPLICANT_FIRST_NAME` | Your first name |
+| `APPLICANT_LAST_NAME` | Your last name |
+| `APPLICANT_EMAIL` | Your email |
+| `APPLICANT_PHONE` | Your phone |
+| `APPLICANT_LINKEDIN_URL` | LinkedIn URL |
+
+Railway auto-deploys from `main` on every push and uses `railway.toml` for the start command.
+
+### GitHub Actions — automated agent runs
+
+The workflow at `.github/workflows/agent.yml` runs every 5 hours on a **self-hosted runner** (your own machine) for a residential IP — important because LinkedIn blocks GitHub's hosted IPs.
+
+**One-time runner setup:**
+
+1. Go to your repo → Settings → Actions → Runners → **New self-hosted runner**
+2. Follow the download and configure steps shown
+3. Start the runner:
+```bash
+cd ~/actions-runner
+./run.sh             # foreground
+# or as a background service:
+./svc.sh install && ./svc.sh start
 ```
+
+**GitHub Secrets to add** (repo → Settings → Secrets → Actions):
+
+| Secret | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude API key |
+| `DATABASE_URL` | Neon connection string |
+| `TELEGRAM_TOKEN` | (optional) Telegram bot token |
+| `TELEGRAM_CHAT_ID` | (optional) Your chat ID |
+| `HUNTER_API_KEY` | (optional) Hunter.io key |
+
+**Trigger a run manually:** GitHub → Actions tab → Job Application Agent → **Run workflow**
+
+---
+
+## Approval workflow
+
+```
+Agent runs (GitHub Actions, 5am, 10am, 3pm, 8pm, 1am...)
+  ↓
+Telegram notification: "New resume ready — Generac | ATS 98 | PDF attached"
+  ↓
+Open Railway dashboard → All Tracked Jobs tab
+  ↓
+Review the PDF → click Apply or Reject
+  ↓
+Greenhouse/Lever jobs → auto-submitted by the agent
+LinkedIn/Workday/Indeed jobs → you get the link, apply manually
+```
+
+The `Status` column in the tracker shows the exact state of every job:
+
+| Status | Meaning |
+|---|---|
+| `Resume Ready` | Tailored and waiting for your decision |
+| `Low ATS` | Resume prepared but scored below threshold |
+| `Applied` | You clicked Apply |
+| `Not Applied` | You clicked Reject |
+| `Failed` | Tailoring crashed — see `agent.log` |
+| `No JD` | Job description couldn't be fetched |
+| `Skipped` | Fit filter determined you're underqualified |
 
 ---
 
 ## Configuration (`job-agent/config.py`)
 
+The top of `config.py` has all the knobs:
+
 ```python
 TARGET_ROLES = ["Data Scientist", "ML Engineer", "AI Engineer", ...]
 YOUR_YEARS_EXPERIENCE = 3
-YOE_MAX_FILTER = 5        # skip jobs requiring more than 5 yrs
-ATS_SCORE_MIN = 89        # retry if below
-ATS_SCORE_MAX = 95        # flag if above (keyword stuffing risk)
+YOE_MAX_FILTER = 5        # skip jobs requiring more than this many years
+ATS_SCORE_MIN  = 89       # retry tailoring if ATS is below this
+ATS_SCORE_MAX  = 95       # flag if above (keyword stuffing risk)
 
-# LinkedIn scraping (20 queries × 4 pages × 25 results = up to 2,000 raw cards/run)
-LINKEDIN_QUERIES    = [...]   # 20 keyword+location combos (data science, ML/AI, remote, top metros)
-LINKEDIN_MAX_PAGES  = 4       # pages per query
-LINKEDIN_PAGE_DELAY = 2.0     # seconds between page requests
-LINKEDIN_QUERY_DELAY = 3.0    # seconds between queries
+ROLE_KEYWORDS    = [...]  # job title must contain one of these
+EXCLUDE_KEYWORDS = [...]  # job title must NOT contain any of these
+LOCATION_FILTER  = True   # True = US + remote only
 
-GREENHOUSE_COMPANIES = { "stripe": "Stripe", "openai": "OpenAI", ... }  # 75+ companies
-LEVER_COMPANIES      = { "netflix": "Netflix", "reddit": "Reddit", ... } # 25+ companies
-ASHBY_COMPANIES      = { "linear": "Linear", "ramp": "Ramp", ... }       # 35+ companies
+GREENHOUSE_COMPANIES = { "stripe": "Stripe", "openai": "OpenAI", ... }
+LEVER_COMPANIES      = { "netflix": "Netflix", "reddit": "Reddit", ... }
+ASHBY_COMPANIES      = { "linear": "Linear", "ramp": "Ramp", ... }
+WORKDAY_API_COMPANIES  = { "nvidia": {...}, ... }
+WORKDAY_CSRF_COMPANIES = { "tesla": {...}, "salesforce": {...}, ... }
 ```
 
 ---
 
-## Automated scheduling (self-hosted GitHub Actions runner)
+## API keys
 
-See `job-agent/RUNNER_SETUP.md` for one-time setup to run the agent on your machine automatically every 5 hours via GitHub Actions cron — no server required.
+### Required
+- **`ANTHROPIC_API_KEY`** — [console.anthropic.com](https://console.anthropic.com) → API Keys
 
-The workflow at `.github/workflows/agent.yml` triggers on schedule and on manual `workflow_dispatch` (also triggerable from the dashboard).
+### Telegram (strongly recommended — this is how you get notified)
+1. Message `@BotFather` → `/newbot` → copy the token
+2. Message your bot once, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` → find `"chat": {"id": ...}`
+
+### Optional
+- **`HUNTER_API_KEY`** — [hunter.io](https://hunter.io) free tier = 25 searches/month
+- **Gmail** — Enable Gmail API at [console.cloud.google.com](https://console.cloud.google.com) → OAuth2 credentials (Desktop App) → download as `credentials.json` → run `python agent.py` once locally to complete OAuth
 
 ---
 
@@ -160,58 +276,52 @@ The workflow at `.github/workflows/agent.yml` triggers on schedule and on manual
 
 ```
 resume/
-├── .github/workflows/agent.yml   ← GitHub Actions (self-hosted runner)
-├── .gitignore
-├── README.md
+├── .github/workflows/agent.yml   ← GitHub Actions (self-hosted runner, every 5h)
+├── railway.toml                  ← Railway deployment config
+├── frontend/                     ← React dashboard (served by FastAPI)
+│   ├── index.html
+│   ├── styles.css
+│   ├── favicon.svg
+│   └── src/
+│       ├── app.jsx               ← root app + auth + routing
+│       ├── login.jsx             ← password login
+│       ├── dashboard.jsx         ← overview + stats
+│       ├── tracker.jsx           ← job tracker (approve / reject / status)
+│       ├── recruiters.jsx        ← recruiter outreach tracker
+│       ├── analytics.jsx         ← charts (ATS distribution, funnel, portals)
+│       ├── chrome.jsx            ← sidebar + topbar
+│       ├── data.jsx              ← API fetch layer
+│       └── icons.jsx             ← icon set
 └── job-agent/
     ├── agent.py                  ← main entry point + scheduler
     ├── config.py                 ← all targeting and tuning knobs
-    ├── base_resume.tex           ← your LaTeX resume (replace this)
+    ├── base_resume.tex           ← your LaTeX master resume (edit this)
     ├── requirements.txt
     ├── RUNNER_SETUP.md           ← self-hosted runner setup guide
-    │
     ├── sources/                  ← job collection
-    │   ├── indeed_rss.py         ← Indeed RSS + Himalayas fallback
-    │   ├── greenhouse_api.py     ← Greenhouse public API (75+ companies)
-    │   ├── lever_api.py          ← Lever public API (25+ companies)
-    │   ├── ashby_api.py          ← Ashby public API (35+ companies)
-    │   ├── workday_api.py        ← Workday JSON API + CSRF support
+    │   ├── linkedin_jobs.py      ← LinkedIn direct search (guest API)
     │   ├── email_parser.py       ← Gmail → LinkedIn alert parser
-    │   ├── linkedin_jobs.py      ← LinkedIn direct search
+    │   ├── indeed_rss.py
+    │   ├── greenhouse_api.py
+    │   ├── lever_api.py
+    │   ├── ashby_api.py
+    │   ├── workday_api.py        ← Workday JSON API + Playwright CSRF support
     │   └── custom_careers.py     ← Google / Meta / Microsoft / Amazon
-    │
     ├── pipeline/                 ← processing
-    │   ├── dedup.py              ← SQLite: jobs + recruiters tables
-    │   ├── jd_extractor.py       ← fetch + clean JD text from URL
-    │   ├── fit_filter.py         ← Claude Haiku: skip unqualified jobs before tailoring
-    │   ├── tailor_resume.py      ← Claude Sonnet: rewrite resume for JD
+    │   ├── dedup.py              ← SQLite + PostgreSQL dual-backend
+    │   ├── jd_extractor.py       ← fetch + clean JD text
+    │   ├── fit_filter.py         ← Claude Haiku quick qualification screen
+    │   ├── tailor_resume.py      ← Claude Sonnet resume rewriter
     │   ├── latex_compiler.py     ← pdflatex wrapper + page count
     │   ├── ats_scorer.py         ← keyword extraction + ATS score
-    │   ├── quality_gate.py       ← quality checks + retries
+    │   ├── quality_gate.py       ← quality checks + retry logic
     │   └── auto_apply.py         ← Greenhouse + Lever form submission
-    │
     ├── outputs/                  ← notifications + tracking
     │   ├── tracker.py            ← Google Sheets logger
-    │   ├── telegram_alert.py     ← Telegram bot alerts
-    │   └── recruiter_finder.py   ← Hunter.io lookup + cold email
-    │
-    ├── dashboard/                ← FastAPI web dashboard
-    │   ├── main.py               ← routes (review, approve, reject, analytics)
-    │   ├── templates/            ← Jinja2 HTML templates
-    │   └── static/               ← CSS
-    │
-    ├── tests/                    ← unit tests (run with pytest)
-    ├── db/                       ← SQLite database (auto-created, gitignored)
-    └── resumes/                  ← compiled PDFs (auto-created, gitignored)
-```
-
----
-
-## Running tests
-
-```bash
-cd job-agent
-python -m pytest tests/ -v
+    │   ├── telegram_alert.py     ← Telegram bot alerts + PDF preview
+    │   └── recruiter_finder.py   ← Hunter.io lookup + cold email draft
+    └── dashboard/
+        └── main.py               ← FastAPI backend (API + static file serving)
 ```
 
 ---
@@ -223,6 +333,19 @@ python -m pytest tests/ -v
 | `base_resume.tex not found` | Make sure `base_resume.tex` is in `job-agent/` |
 | `pdflatex: command not found` | `sudo apt install texlive-latex-extra` |
 | `pdftotext: command not found` | `sudo apt install poppler-utils` |
-| Telegram alerts not arriving | Check `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` |
-| ATS score always 0 | `pdftotext` can't read the PDF — check pdflatex compiled successfully |
-| Gmail auth browser doesn't open | Run `python agent.py` locally once to complete OAuth |
+| Telegram alerts not arriving | Check `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` |
+| ATS score always 0 | `pdftotext` can't read the PDF — check pdflatex compiled cleanly |
+| Gmail auth browser won't open | Run `python agent.py` locally once to complete OAuth flow |
+| Workday CSRF 422 errors | Run `playwright install chromium` once |
+| `malloc double free` on macOS | `pip uninstall psycopg2-binary` — the project uses `pg8000` instead |
+| Jobs disappear after approve | Restart the dashboard server to apply latest DB migrations |
+| Dashboard shows blank page | Check that `DATABASE_URL` or `DB_PATH` is set correctly in `.env` |
+
+---
+
+## Running tests
+
+```bash
+cd job-agent
+python -m pytest tests/ -v
+```
