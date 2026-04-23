@@ -389,7 +389,7 @@ def get_stats(db_path: str = DB_PATH) -> dict:
     with _conn() as c:
         total    = _x(c, "SELECT COUNT(*) FROM jobs").fetchone()[0]
         pending  = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status='pending_review' AND processed=1").fetchone()[0]
-        applied  = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status='applied'").fetchone()[0]
+        applied  = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status IN ('applied', 'approved')").fetchone()[0]
         rejected = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status='rejected'").fetchone()[0]
     return {"total": total, "pending": pending, "applied": applied, "rejected": rejected}
 
@@ -496,7 +496,7 @@ def get_weekly_submissions(weeks: int = 8, db_path: str = DB_PATH) -> list[dict]
                 (ws, we)).fetchone()[0]
 
             applied = _x(c,
-                "SELECT COUNT(*) FROM jobs WHERE approval_status='applied' AND applied_at >= ? AND applied_at < ?",
+                "SELECT COUNT(*) FROM jobs WHERE approval_status IN ('applied', 'approved') AND applied_at >= ? AND applied_at < ?",
                 (ws, we)).fetchone()[0]
 
             results.append({
@@ -524,7 +524,7 @@ def get_funnel_data(db_path: str = DB_PATH) -> dict:
     with _conn() as c:
         discovered = _x(c, "SELECT COUNT(*) FROM jobs").fetchone()[0]
         prepared   = _x(c, "SELECT COUNT(*) FROM jobs WHERE processed=1 AND pdf_path IS NOT NULL").fetchone()[0]
-        applied    = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status='applied'").fetchone()[0]
+        applied    = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status IN ('applied', 'approved')").fetchone()[0]
     return {"discovered": discovered, "prepared": prepared, "applied": applied}
 
 

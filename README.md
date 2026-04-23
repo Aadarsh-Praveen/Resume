@@ -166,6 +166,8 @@ This gives you a publicly accessible dashboard and lets the agent run on a sched
 | `DATABASE_URL` | Neon connection string |
 | `DASHBOARD_PASSWORD` | Password to protect the dashboard |
 | `ANTHROPIC_API_KEY` | Claude API key |
+| `GITHUB_DASHBOARD_TOKEN` | GitHub personal access token with `repo` scope — lets the "Run Agent" button in the dashboard trigger GitHub Actions |
+| `GITHUB_REPO` | `aadarsh-praveen/resume` (your fork's repo path) |
 | `APPLICANT_FIRST_NAME` | Your first name |
 | `APPLICANT_LAST_NAME` | Your last name |
 | `APPLICANT_EMAIL` | Your email |

@@ -135,8 +135,11 @@
     },
 
     async appliedRows() {
-      const jobs = await apiFetch('/api/jobs?approval_status=applied&limit=500');
-      return jobs.map(mapJobToRow);
+      const [applied, approved] = await Promise.all([
+        apiFetch('/api/jobs?approval_status=applied&limit=500'),
+        apiFetch('/api/jobs?approval_status=approved&limit=500'),
+      ]);
+      return [...applied, ...approved].map(mapJobToRow);
     },
 
     async preparedRows() {

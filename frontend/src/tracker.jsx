@@ -218,7 +218,7 @@ const TrackerView = () => {
   const statuses = tab === 'applied'
     ? ['all', 'Applied', 'Not Applied']
     : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'High ATS', 'Failed', 'No JD', 'Skipped'];
-  const appStatuses = ['all', 'Pending', 'Interviewing', 'Accepted', 'Rejected'];
+  const appStatuses = ['all', 'none', 'Interviewing', 'Accepted', 'Rejected'];
 
   const filtered = useMemo(() => {
     let out = rows;
@@ -232,7 +232,7 @@ const TrackerView = () => {
     }
     if (portal !== 'all') out = out.filter(r => r.portal === portal);
     if (status !== 'all') out = out.filter(r => r.status === status);
-    if (appFilter !== 'all') out = out.filter(r => r.appStatus === appFilter);
+    if (appFilter !== 'all') out = out.filter(r => appFilter === 'none' ? !r.appStatus : r.appStatus === appFilter);
     const { key, dir } = sort;
     const mult = dir === 'asc' ? 1 : -1;
     out = [...out].sort((a, b) => {
@@ -379,7 +379,7 @@ const TrackerView = () => {
           {statuses.map(s => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
         </select>
         <select className="sel" value={appFilter} onChange={e => setAppFilter(e.target.value)}>
-          {appStatuses.map(s => <option key={s} value={s}>{s === 'all' ? 'All outcomes' : s}</option>)}
+          {appStatuses.map(s => <option key={s} value={s}>{s === 'all' ? 'All outcomes' : s === 'none' ? 'No status yet' : s}</option>)}
         </select>
         <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-3)' }}>
           Showing {filtered.length} of {rows.length}
