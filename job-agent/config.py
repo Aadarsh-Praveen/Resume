@@ -327,6 +327,17 @@ EXCLUDE_KEYWORDS = [
     "clinician",
 ]
 
+# ── Parallel pipeline settings ────────────────────────────────────────────────
+MAX_PROCESSING_WORKERS = 2   # concurrent job-processing workers (limited by Claude rate limits)
+
+# Companies that get claude-opus-4-7 for the tailoring step (best quality, ~15× cost).
+# All other companies use claude-sonnet-4-6.
+OPUS_COMPANIES = [
+    "google", "deepmind", "anthropic", "openai", "meta", "apple",
+    "microsoft", "amazon", "stripe", "nvidia", "netflix", "airbnb",
+    "databricks", "scale ai", "palantir", "spacex", "tesla",
+]
+
 # ── Resume tailoring Claude prompt ───────────────────────────────────────────
 TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist. Tailor the provided LaTeX resume to the job description.
 

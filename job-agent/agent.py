@@ -24,8 +24,11 @@ Usage:
 import argparse
 import logging
 import os
+import queue
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -71,19 +74,101 @@ from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
 from pipeline.location_filter import is_us_or_remote
-from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER, ROLE_KEYWORDS, EXCLUDE_KEYWORDS
+from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER, ROLE_KEYWORDS, EXCLUDE_KEYWORDS, MAX_PROCESSING_WORKERS
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
 FAILED_LOG = "failed_jobs.log"
 
+_SENTINEL = object()  # poison-pill used to signal end-of-queue to worker threads
+
+# ── Source registry ────────────────────────────────────────────────────────────
+# Each entry: (display_name, callable)
+# Defined here so both run_collection_cycle and run_pipeline share the same list.
+def _build_sources():
+    return [
+        ("linkedin",     fetch_linkedin_jobs),
+        ("gmail",        watch_linkedin_alerts),
+        ("indeed",       fetch_indeed_jobs),
+        ("greenhouse",   fetch_greenhouse_jobs),
+        ("lever",        fetch_lever_jobs),
+        ("ashby",        fetch_ashby_jobs),
+        ("workday",      fetch_workday_jobs),
+        ("custom",       fetch_custom_career_jobs),
+        ("yc",           fetch_yc_jobs),
+        ("wellfound",    fetch_wellfound_jobs),
+        ("mass_general", fetch_mass_general_jobs),
+        ("mayo_clinic",  fetch_mayo_clinic_jobs),
+    ]
+
+
+def _fetch_source(name: str, fn) -> list[dict]:
+    """Run one source scraper, catching all errors so other sources are unaffected."""
+    try:
+        jobs = fn()
+        logger.info("Source '%s': %d jobs fetched", name, len(jobs))
+        return jobs
+    except Exception as e:
+        logger.error("Source '%s' failed: %s", name, e)
+        return []
+
+
+def _validate_and_insert(job: dict) -> dict | None:
+    """
+    Filter, deduplicate, fetch JD text, and insert one job into the DB.
+    Returns the job dict (with 'id' set) if it was inserted, None otherwise.
+    Thread-safe: each DB helper opens its own connection.
+    """
+    company = job.get("company", "")
+    title   = job.get("title", "")
+
+    if not company or not title or not job.get("url"):
+        return None
+    if is_duplicate(company, title, DB_PATH):
+        logger.debug("Duplicate: %s at %s", title, company)
+        return None
+
+    if LOCATION_FILTER and not is_us_or_remote(job.get("location", "")):
+        logger.info(
+            "Skipping %s at %s — location '%s' outside filter",
+            title, company, job.get("location", ""),
+        )
+        return None
+
+    if not job.get("jd_text"):
+        try:
+            job["jd_text"] = extract_jd_text(job["url"])
+        except ValueError as e:
+            if "CLOSED" in str(e):
+                logger.info("Skipping %s at %s — no longer accepting applications", title, company)
+                return None
+            logger.warning("JD extraction failed for %s: %s", job["url"], e)
+            job["jd_text"] = ""
+        except Exception as e:
+            logger.warning("JD extraction failed for %s: %s", job["url"], e)
+            job["jd_text"] = ""
+
+    if YOE_MAX_FILTER > 0 and job.get("jd_text"):
+        min_yoe = extract_min_years(job["jd_text"])
+        if min_yoe is not None and min_yoe > YOE_MAX_FILTER:
+            logger.info(
+                "Skipping %s at %s — requires %d+ yrs (limit: %d)",
+                title, company, min_yoe, YOE_MAX_FILTER,
+            )
+            return None
+
+    job_id = insert_job(job, DB_PATH)
+    job["id"] = job_id
+    logger.info("New job #%d: %s at %s (source: %s)", job_id, title, company, job.get("source", ""))
+    return job
 
 
 # ── Job collection ─────────────────────────────────────────────────────────────
 
 def run_collection_cycle() -> int:
     """
-    Poll all job sources, deduplicate, and insert new jobs into the DB.
+    Collect from all sources in PARALLEL, deduplicate, and insert new jobs.
+    All 12 sources scrape simultaneously; results are merged and filtered.
 
     Returns:
         Number of new jobs inserted.
@@ -92,148 +177,18 @@ def run_collection_cycle() -> int:
     logger.info("COLLECTION CYCLE — %s", datetime.utcnow().isoformat())
     logger.info("=" * 60)
 
-    all_new_jobs: list[dict] = []
+    sources = _build_sources()
+    all_raw: list[dict] = []
 
-    # Source 1: LinkedIn direct search (guest API — no login required)
-    try:
-        jobs = fetch_linkedin_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("LinkedIn direct search failed: %s", e)
+    with ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="src") as exc:
+        futs = {exc.submit(_fetch_source, name, fn): name for name, fn in sources}
+        for fut in as_completed(futs):
+            all_raw.extend(fut.result())
 
-    # Source 2: LinkedIn email alerts (Gmail)
-    try:
-        jobs = watch_linkedin_alerts()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.warning("Gmail/LinkedIn alerts failed (check credentials): %s", e)
-
-    # Source 3: Indeed RSS
-    try:
-        jobs = fetch_indeed_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Indeed RSS failed: %s", e)
-
-    # Source 4: Greenhouse
-    try:
-        jobs = fetch_greenhouse_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Greenhouse API failed: %s", e)
-
-    # Source 5: Lever
-    try:
-        jobs = fetch_lever_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Lever API failed: %s", e)
-
-    # Source 6: Ashby
-    try:
-        jobs = fetch_ashby_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Ashby API failed: %s", e)
-
-    # Source 7: Workday JSON API (NVIDIA, Tesla, Apple, Salesforce, AMD)
-    try:
-        jobs = fetch_workday_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Workday API failed: %s", e)
-
-    # Source 8: Custom career pages (Google, Meta, Microsoft, Amazon)
-    try:
-        jobs = fetch_custom_career_jobs()
-        all_new_jobs.extend(jobs)
-    except Exception as e:
-        logger.error("Custom career pages failed: %s", e)
-
-    # Source 9: YC Work at a Startup
-    try:
-        jobs = fetch_yc_jobs()
-        all_new_jobs.extend(jobs)
-        logger.info("YC: %d jobs collected", len(jobs))
-    except Exception as e:
-        logger.error("YC jobs failed: %s", e)
-
-    # Source 10: Wellfound
-    try:
-        jobs = fetch_wellfound_jobs()
-        all_new_jobs.extend(jobs)
-        logger.info("Wellfound: %d jobs collected", len(jobs))
-    except Exception as e:
-        logger.error("Wellfound jobs failed: %s", e)
-
-    # Source 11: Mass General Brigham
-    try:
-        jobs = fetch_mass_general_jobs()
-        all_new_jobs.extend(jobs)
-        logger.info("Mass General Brigham: %d jobs collected", len(jobs))
-    except Exception as e:
-        logger.error("Mass General Brigham failed: %s", e)
-
-    # Source 12: Mayo Clinic
-    try:
-        jobs = fetch_mayo_clinic_jobs()
-        all_new_jobs.extend(jobs)
-        logger.info("Mayo Clinic: %d jobs collected", len(jobs))
-    except Exception as e:
-        logger.error("Mayo Clinic failed: %s", e)
-
-    # Deduplicate and insert
     inserted = 0
-    for job in all_new_jobs:
-        company = job.get("company", "")
-        title = job.get("title", "")
-
-        if not company or not title or not job.get("url"):
-            continue
-
-        if is_duplicate(company, title, DB_PATH):
-            logger.debug("Duplicate: %s at %s — skipping", title, company)
-            continue
-
-        # ── Location filter ───────────────────────────────────────────────
-        if LOCATION_FILTER:
-            if not is_us_or_remote(job.get("location", "")):
-                logger.info(
-                    "Skipping %s at %s — location '%s' outside filter",
-                    title, company, job.get("location"),
-                )
-                continue
-
-        # Extract full JD text if not already present
-        if not job.get("jd_text"):
-            try:
-                job["jd_text"] = extract_jd_text(job["url"])
-            except ValueError as e:
-                if "CLOSED" in str(e):
-                    logger.info(
-                        "Skipping %s at %s — no longer accepting applications",
-                        title, company,
-                    )
-                    continue
-                logger.warning("JD extraction failed for %s: %s", job["url"], e)
-                job["jd_text"] = ""
-            except Exception as e:
-                logger.warning("JD extraction failed for %s: %s", job["url"], e)
-                job["jd_text"] = ""
-
-        # ── Years-of-experience filter ────────────────────────────────────
-        if YOE_MAX_FILTER > 0 and job.get("jd_text"):
-            min_yoe = extract_min_years(job["jd_text"])
-            if min_yoe is not None and min_yoe > YOE_MAX_FILTER:
-                logger.info(
-                    "Skipping %s at %s — requires %d+ yrs (limit: %d)",
-                    title, company, min_yoe, YOE_MAX_FILTER,
-                )
-                continue
-
-        job_id = insert_job(job, DB_PATH)
-        logger.info("New job #%d: %s at %s (source: %s)", job_id, title, company, job.get("source"))
-        inserted += 1
+    for job in all_raw:
+        if _validate_and_insert(job):
+            inserted += 1
 
     logger.info("Collection cycle complete — %d new jobs inserted", inserted)
     return inserted
@@ -362,7 +317,7 @@ def process_job(job: dict) -> bool:
 
 def run_processing_cycle() -> tuple[int, int]:
     """
-    Process all unprocessed jobs in the database.
+    Process all unprocessed jobs using MAX_PROCESSING_WORKERS parallel workers.
 
     Returns:
         (success_count, failure_count)
@@ -374,22 +329,102 @@ def run_processing_cycle() -> tuple[int, int]:
     jobs = get_unprocessed_jobs(DB_PATH)
     logger.info("Found %d unprocessed jobs", len(jobs))
 
-    success = 0
-    failure = 0
+    success = [0]
+    failures = [0]
+    _lock = threading.Lock()
 
-    for job in jobs:
+    def _worker(job):
         try:
-            if process_job(job):
-                success += 1
-            else:
-                failure += 1
+            ok = process_job(job)
+            with _lock:
+                if ok:
+                    success[0] += 1
+                else:
+                    failures[0] += 1
         except Exception as e:
             logger.error("Unexpected error processing job #%d: %s", job["id"], e)
-            failure += 1
-        time.sleep(2)  # brief pause between jobs
+            with _lock:
+                failures[0] += 1
 
-    logger.info("Processing cycle complete — %d success, %d failure", success, failure)
-    return success, failure
+    with ThreadPoolExecutor(max_workers=MAX_PROCESSING_WORKERS, thread_name_prefix="proc") as exc:
+        list(exc.map(_worker, jobs))
+
+    logger.info("Processing cycle complete — %d success, %d failure", success[0], failures[0])
+    return success[0], failures[0]
+
+
+def run_pipeline() -> tuple[int, int]:
+    """
+    True producer-consumer pipeline: collection and processing overlap in real time.
+
+    A background thread scrapes all sources in parallel and feeds validated jobs
+    into a bounded queue.  MAX_PROCESSING_WORKERS threads consume from the queue
+    concurrently — processing starts as soon as the first job arrives rather than
+    waiting for the entire collection phase to finish.
+
+    Returns:
+        (jobs_inserted, jobs_processed_successfully)
+    """
+    logger.info("=" * 60)
+    logger.info("PIPELINE START — %s", datetime.utcnow().isoformat())
+    logger.info("=" * 60)
+
+    job_queue: queue.Queue = queue.Queue(maxsize=50)
+    inserted_count = [0]
+    success_count = [0]
+    _lock = threading.Lock()
+
+    def _collector():
+        sources = _build_sources()
+        with ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="src") as exc:
+            futs = {exc.submit(_fetch_source, name, fn): name for name, fn in sources}
+            for fut in as_completed(futs):
+                for raw_job in fut.result():
+                    validated = _validate_and_insert(raw_job)
+                    if validated:
+                        with _lock:
+                            inserted_count[0] += 1
+                        job_queue.put(validated)
+        # One sentinel per worker signals end-of-queue
+        for _ in range(MAX_PROCESSING_WORKERS):
+            job_queue.put(_SENTINEL)
+        logger.info("Collector done — %d jobs queued for processing", inserted_count[0])
+
+    def _processor():
+        while True:
+            job = job_queue.get()
+            if job is _SENTINEL:
+                job_queue.task_done()
+                break
+            try:
+                ok = process_job(job)
+                if ok:
+                    with _lock:
+                        success_count[0] += 1
+            except Exception as e:
+                logger.error("Pipeline processor error for job #%s: %s", job.get("id", "?"), e)
+            finally:
+                job_queue.task_done()
+
+    collector_thread = threading.Thread(target=_collector, name="collector", daemon=True)
+    collector_thread.start()
+
+    processor_threads = [
+        threading.Thread(target=_processor, name=f"processor-{i}", daemon=True)
+        for i in range(MAX_PROCESSING_WORKERS)
+    ]
+    for t in processor_threads:
+        t.start()
+
+    collector_thread.join()
+    for t in processor_threads:
+        t.join()
+
+    logger.info(
+        "Pipeline complete — %d inserted, %d processed successfully",
+        inserted_count[0], success_count[0],
+    )
+    return inserted_count[0], success_count[0]
 
 
 # ── Test mode ─────────────────────────────────────────────────────────────────
@@ -463,8 +498,7 @@ def run_daemon() -> None:
     logger.info("  Daily digest:     %02d:00 UTC", DAILY_DIGEST_HOUR)
 
     def collection_and_processing():
-        run_collection_cycle()
-        run_processing_cycle()
+        run_pipeline()
 
     def gmail_check():
         """Quick Gmail-only check with immediate processing."""
@@ -547,9 +581,8 @@ def main() -> None:
     elif args.test_job:
         run_test_job()
     else:
-        # Default: one full cycle
-        run_collection_cycle()
-        run_processing_cycle()
+        # Default: full pipeline (collection + processing in parallel)
+        run_pipeline()
 
 
 if __name__ == "__main__":

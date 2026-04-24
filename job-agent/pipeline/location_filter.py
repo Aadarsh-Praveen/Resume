@@ -14,8 +14,12 @@ The DB cache means each unique location string is geocoded at most once ever.
 import logging
 import re
 import time
+import threading
 
 logger = logging.getLogger(__name__)
+
+# Serialise Nominatim calls across threads — free tier enforces 1 req/sec globally
+_NOMINATIM_LOCK = threading.Lock()
 
 # Nominatim rate limit: 1 request per second
 _NOMINATIM_DELAY = 1.1
@@ -131,16 +135,14 @@ def _geocode(location: str) -> bool | None:
         from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 
         geocoder = Nominatim(user_agent="applyflow-job-agent/1.0", timeout=5)
-        time.sleep(_NOMINATIM_DELAY)  # respect rate limit
-
-        result = geocoder.geocode(location, exactly_one=True, addressdetails=True)
+        with _NOMINATIM_LOCK:          # one thread at a time, 1 req/sec enforced
+            time.sleep(_NOMINATIM_DELAY)
+            result = geocoder.geocode(location, exactly_one=True, addressdetails=True)
         if result is None:
             logger.debug("Nominatim: no result for '%s'", location)
             return None
 
-        country_code = (
-            result.raw.get("address", {}).get("country_code", "")
-        ).lower()
+        country_code = result.raw.get("address", {}).get("country_code", "").lower()
         is_us = country_code == "us"
         logger.info("Geocoded '%s' → country_code='%s' → is_us=%s", location, country_code, is_us)
         return is_us
