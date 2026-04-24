@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 HUNTER_API_BASE = "https://api.hunter.io/v2"
 REQUEST_TIMEOUT = 15
 
+# Domains that Hunter.io will return junk results for — skip lookup entirely
+_SKIP_DOMAINS = {
+    "jobs.com", "lever.co", "greenhouse.io", "ashbyhq.com", "ashby.com",
+    "workday.com", "myworkdayjobs.com", "taleo.net", "icims.com",
+    "indeed.com", "linkedin.com", "glassdoor.com", "ziprecruiter.com",
+    "monster.com", "careerbuilder.com", "simplyhired.com",
+    "smartrecruiters.com", "jobvite.com", "bamboohr.com",
+    "recruiting.ultipro.com", "hire.trakstar.com",
+}
+
 
 # ── Domain extraction ─────────────────────────────────────────────────────────
 
@@ -71,7 +81,7 @@ def _extract_domain(job_url: str, company_name: str) -> str:
 
 # ── Hunter.io API ─────────────────────────────────────────────────────────────
 
-def _hunter_domain_search(domain: str, api_key: str) -> Optional[dict]:
+def _hunter_domain_search(domain: str, api_key: str, company_name: str = "") -> Optional[dict]:
     """
     Search Hunter.io for recruiter/talent emails at a domain.
 
@@ -109,18 +119,18 @@ def _hunter_domain_search(domain: str, api_key: str) -> Optional[dict]:
         for entry in emails:
             position = (entry.get("position") or "").lower()
             if any(kw in position for kw in recruiter_kws):
-                return _extract_hunter_contact(entry, domain)
+                return _extract_hunter_contact(entry, domain, company_name)
 
         # Fall back to highest confidence score
         best = max(emails, key=lambda e: e.get("confidence", 0))
-        return _extract_hunter_contact(best, domain)
+        return _extract_hunter_contact(best, domain, company_name)
 
     except requests.RequestException as e:
         logger.error("Hunter.io search failed: %s", e)
         return None
 
 
-def _extract_hunter_contact(entry: dict, domain: str) -> dict:
+def _extract_hunter_contact(entry: dict, domain: str, company_name: str = "") -> dict:
     """Extract relevant contact fields from a Hunter.io email entry."""
     first = entry.get("first_name", "") or ""
     last = entry.get("last_name", "") or ""
@@ -129,7 +139,7 @@ def _extract_hunter_contact(entry: dict, domain: str) -> dict:
         "title": entry.get("position", ""),
         "email": entry.get("value", ""),
         "linkedin_url": entry.get("linkedin", "") or "",
-        "company": domain,
+        "company": company_name or domain,
     }
 
 
@@ -158,9 +168,15 @@ def find_recruiter(
         return None
 
     domain = _extract_domain(job_url, company)
+
+    # Skip generic/ATS domains — Hunter.io returns the same junk contact for these
+    if domain in _SKIP_DOMAINS or any(domain.endswith("." + d) for d in _SKIP_DOMAINS):
+        logger.info("Skipping Hunter.io for generic domain '%s'", domain)
+        return None
+
     logger.info("Looking up recruiter for %s (domain: %s)", company, domain)
 
-    contact = _hunter_domain_search(domain, api_key)
+    contact = _hunter_domain_search(domain, api_key, company_name=company)
 
     if contact:
         logger.info("Found recruiter: %s (%s)", contact.get("name"), contact.get("email"))

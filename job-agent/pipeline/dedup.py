@@ -478,13 +478,17 @@ def get_all_recruiters(
     company: Optional[str] = None,
     db_path: str = DB_PATH,
 ) -> list[dict]:
+    _join = (
+        "SELECT r.*, j.company AS job_company, j.title AS job_title, j.url AS job_url "
+        "FROM recruiters r LEFT JOIN jobs j ON r.job_id = j.id"
+    )
     with _conn() as c:
         if company:
             return _all(_x(c,
-                "SELECT * FROM recruiters WHERE company=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                f"{_join} WHERE r.company=? ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
                 (company, limit, offset)))
         return _all(_x(c,
-            "SELECT * FROM recruiters ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"{_join} ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
             (limit, offset)))
 
 

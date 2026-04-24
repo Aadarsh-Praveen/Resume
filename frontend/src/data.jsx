@@ -107,10 +107,11 @@
       id: 'REC-' + r.id,
       dbId: r.id,
       name: r.name || 'Unknown',
-      company: r.company || '—',
-      companyDomain: '',
+      company: r.job_company || r.company || '—',
+      companyDomain: r.company || '',
       recruiterTitle: r.title || '—',
-      position: '—',
+      position: r.job_title || '—',
+      jobUrl: r.job_url || '#',
       email: r.email || '—',
       linkedin: r.linkedin_url ? r.linkedin_url.replace(/^https?:\/\//, '') : '—',
       cold: !!r.email_sent,
@@ -142,7 +143,7 @@
 
     async preparedRows() {
       const jobs = await apiFetch('/api/jobs?limit=500');
-      return jobs.filter(j => j.processed === 1).map(mapJobToRow);
+      return jobs.map(mapJobToRow);
     },
 
     async recruiters() {
