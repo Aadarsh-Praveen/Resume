@@ -17,6 +17,8 @@ jinja2>=3.1.0
 python-multipart>=0.0.9
 # PostgreSQL (cloud DB) — pg8000 is pure Python, avoids libpq/OpenSSL conflicts on macOS
 pg8000>=1.30
+# Pure-Python PDF page counter (no poppler/system tools needed)
+pypdf>=4.0.0
 # Testing
 pytest>=8.0.0
 pytest-mock>=3.10.0

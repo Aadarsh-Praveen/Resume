@@ -100,10 +100,21 @@ def _extract_errors(log_output: str) -> str:
 def get_page_count(pdf_path: str) -> int:
     """
     Return the number of pages in a PDF.
-    Tries pdfinfo first, falls back to counting form-feeds via pdftotext.
-    Returns -1 only if both tools are unavailable.
+
+    Tries pypdf first (pure Python, no system tools), then pdfinfo, then
+    pdftotext form-feed counting. Returns -1 only if all three fail.
     """
-    # Primary: pdfinfo
+    # Primary: pypdf — pure Python, no poppler/system tools required
+    try:
+        import pypdf
+        with open(pdf_path, "rb") as _f:
+            count = len(pypdf.PdfReader(_f).pages)
+        logger.debug("pypdf page count: %d", count)
+        return count
+    except Exception as _e:
+        logger.debug("pypdf page count failed: %s", _e)
+
+    # Fallback 1: pdfinfo
     try:
         result = subprocess.run(
             [PDFINFO, pdf_path],
@@ -117,7 +128,7 @@ def get_page_count(pdf_path: str) -> int:
     except (subprocess.SubprocessError, FileNotFoundError, ValueError):
         pass
 
-    # Fallback: pdftotext counts form-feed characters (one per page break)
+    # Fallback 2: pdftotext counts form-feed characters (one per page break)
     try:
         result = subprocess.run(
             [PDFTOTEXT, pdf_path, "-"],
@@ -132,7 +143,7 @@ def get_page_count(pdf_path: str) -> int:
     except (subprocess.SubprocessError, FileNotFoundError):
         pass
 
-    logger.warning("get_page_count: both pdfinfo and pdftotext unavailable")
+    logger.warning("get_page_count: all methods unavailable for %s", pdf_path)
     return -1
 
 
@@ -140,10 +151,25 @@ def get_fill_percentage(pdf_path: str) -> float:
     """
     Estimate how full a single-page PDF is (0.0–1.0).
 
-    Uses pdftotext to count non-empty lines on the first page.
-    A dense A4 resume at 10pt with 0.20in margins fills ~45 lines; we treat 45+ as "full".
-    Returns 1.0 if pdftotext is unavailable (assume full → don't expand).
+    Tries pypdf first (pure Python), then pdftotext.
+    A dense A4 resume at 10pt with 0.25in margins fills ~45 lines; we treat 45+ as "full".
+    Returns 1.0 if all methods fail (assume full → don't trigger unnecessary expansion).
     """
+    # Primary: pypdf text extraction
+    try:
+        import pypdf
+        with open(pdf_path, "rb") as _f:
+            reader = pypdf.PdfReader(_f)
+            if reader.pages:
+                text = reader.pages[0].extract_text() or ""
+                lines = [ln for ln in text.split("\n") if ln.strip()]
+                fill = min(len(lines) / 45.0, 1.0)
+                logger.debug("pypdf fill: %d lines → %.0f%%", len(lines), fill * 100)
+                return fill
+    except Exception as _e:
+        logger.debug("pypdf fill estimation failed: %s", _e)
+
+    # Fallback: pdftotext
     try:
         result = subprocess.run(
             [PDFTOTEXT, "-f", "1", "-l", "1", pdf_path, "-"],
@@ -152,9 +178,8 @@ def get_fill_percentage(pdf_path: str) -> float:
             timeout=10,
         )
         lines = [ln for ln in result.stdout.split("\n") if ln.strip()]
-        # 45 non-empty lines ≈ full page at 0.20in margins; clamp to [0, 1]
         fill = min(len(lines) / 45.0, 1.0)
-        logger.debug("Fill estimate: %d lines → %.0f%%", len(lines), fill * 100)
+        logger.debug("pdftotext fill: %d lines → %.0f%%", len(lines), fill * 100)
         return fill
     except Exception as e:
         logger.warning("get_fill_percentage failed: %s", e)

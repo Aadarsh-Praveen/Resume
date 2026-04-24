@@ -109,19 +109,33 @@ def _build_fix_compile_prompt(broken_tex: str, error_log: str) -> str:
 
 
 def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
+    needed = 100 - fill_pct
+    if needed >= 25:
+        guidance = (
+            "Add 1 bullet to each work experience role (most recent → 4 bullets, others → 3 each) "
+            "and expand the summary to 4 full lines."
+        )
+    elif needed >= 12:
+        guidance = (
+            "Add 1 bullet to the most recent role only (→ 4 bullets total) "
+            "and lengthen 3–4 existing bullets by 4–6 words each."
+        )
+    else:
+        guidance = (
+            "Lengthen existing bullets by 3–5 words each — extend the result metric or method. "
+            "Do NOT add new bullets."
+        )
     return (
-        f"This resume is only ~{fill_pct}% full — it must fill the ENTIRE page.\n\n"
-        f"Expand to reach these EXACT targets (do not exceed them):\n"
-        f"1. Most recent role: exactly 4 bullets (add from original if needed)\n"
-        f"2. Second role: exactly 3 bullets\n"
-        f"3. Third/oldest role: exactly 3 bullets\n"
-        f"4. Projects: 2 projects × exactly 3 bullets each\n"
-        f"5. Summary: exactly 3 sentences, 3–4 lines — never exceed 4 lines\n"
-        f"6. Skills: 4 categories × 6–7 tools each\n"
-        f"7. DO NOT add a Certifications or Publications section — they overflow the page.\n\n"
-        f"Every bullet: 20–28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
-        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words — rephrase to avoid 2–5 word orphan endings.\n"
-        f"Do NOT add blank lines or \\\\vspace — add real content only.\n"
+        f"This resume is only ~{fill_pct}% full and must fill the ENTIRE page.\n\n"
+        f"{guidance}\n\n"
+        f"Rules:\n"
+        f"• Every bullet: 20–28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
+        f"• No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words.\n"
+        f"• Do NOT add a Certifications or Publications section.\n"
+        f"• Do NOT add blank lines or \\\\vspace — real content only.\n"
+        f"• Summary: 3–4 lines max — never exceed 4 lines.\n"
+        f"• Skills: 4 categories × 6–7 tools each.\n\n"
+        f"IMPORTANT: do not overshoot — the goal is ~95%% fill, not 2 pages.\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{sparse_tex}"
     )
@@ -130,16 +144,17 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
 def _build_trim_prompt(long_tex: str, page_count: int) -> str:
     return (
         f"This resume compiled to {page_count} pages. It MUST fit on exactly 1 page.\n\n"
-        f"Apply ALL of these cuts IN ORDER — do not stop early:\n"
-        f"1. DELETE the Certifications section entirely — it overflows the 1-page budget.\n"
-        f"2. DELETE the Publications/Publication section entirely.\n"
-        f"3. Most recent role: max 4 bullets. Second role: max 3 bullets. Oldest role: max 3 bullets.\n"
-        f"4. Every bullet: hard cap of 22 words — count and truncate any that exceed this.\n"
-        f"5. Projects: keep top 2 most JD-relevant only, 3 bullets each, 22 words max per bullet.\n"
-        f"6. Summary: exactly 3 sentences, 3–4 lines max — never exceed 4 lines.\n"
-        f"7. Skills: max 4 categories, 6 tools each — drop entire categories not needed.\n"
-        f"8. Company line format: CompanyName \\\\hfill City, ST — NO pipes, NO product names.\n\n"
-        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words — rephrase to avoid 2–5 word orphan endings.\n"
+        f"Remove the MINIMUM content needed — stop as soon as 1 page is achievable.\n"
+        f"Apply in this exact order:\n"
+        f"1. DELETE Certifications section entirely (always safe to remove).\n"
+        f"2. DELETE Publications section entirely.\n"
+        f"3. Shorten any bullet exceeding 22 words — trim trailing clauses, keep the impact.\n"
+        f"4. Most recent role: max 4 bullets. Second role: max 3. Oldest role: max 3.\n"
+        f"5. Projects: keep top 2 most JD-relevant only, max 3 bullets each, ≤20 words each.\n"
+        f"6. Summary: 3 sentences, 3–4 lines max.\n"
+        f"7. Skills: max 4 categories, 6 tools each.\n"
+        f"8. Company line format: CompanyName \\\\hfill City, ST — no pipes, no product names.\n\n"
+        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words.\n"
         f"Do NOT remove any job roles, companies, or dates.\n"
         f"Return ONLY the complete corrected .tex file — no explanations.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
@@ -376,24 +391,56 @@ def tailor_resume(
             tex_content = _extract_tex(_call_claude(expand_prompt, client))
             tex_content = sanitise_latex(tex_content)
             success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
-            if success and get_page_count(new_pdf) == 1:
-                pdf_path = new_pdf
-            else:
-                logger.warning("Expand recompile failed/overflowed — keeping previous")
+            if not success:
+                logger.warning("Expand recompile failed — keeping pre-expand PDF")
                 break
+            new_pages = get_page_count(new_pdf)
+            if new_pages == 1:
+                pdf_path = new_pdf
+            elif new_pages > 1:
+                # Expand overshot — trim lightly to recover 1 page
+                logger.warning(
+                    "Job #%d: expand overflowed to %d pages — trimming to recover",
+                    job_id, new_pages,
+                )
+                recover_tex = _extract_tex(
+                    _call_claude(_build_trim_prompt(tex_content, new_pages), client)
+                )
+                recover_tex = sanitise_latex(recover_tex)
+                recover_tex = adjust_margin(recover_tex, 0.25)
+                ok, recovered_pdf, _ = compile_tex(recover_tex, RESUMES_DIR, pdf_filename)
+                if ok and get_page_count(recovered_pdf) == 1:
+                    tex_content = recover_tex
+                    pdf_path = recovered_pdf
+                    logger.info("Post-expand trim recovered 1-page layout")
+                else:
+                    logger.warning("Post-expand trim also failed — keeping pre-expand PDF")
+            break
 
         elif verdict == "OVERFLOW":
             logger.warning(
-                "Job #%d: Claude says OVERFLOW — trimming margin (attempt %d)",
+                "Job #%d: visual OVERFLOW on attempt %d — trimming content",
                 job_id, visual_attempt + 1,
             )
-            # Try one margin step before declaring failure
-            tex_content = adjust_margin(tex_content, 0.22)
-            success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
-            if success:
-                pdf_path = new_pdf
-            else:
-                break
+            # Content trim is more reliable than margin shrink for true overflow
+            pages_actual = get_page_count(pdf_path)
+            trim_pages = pages_actual if pages_actual > 1 else 2
+            trim_tex = _extract_tex(
+                _call_claude(_build_trim_prompt(tex_content, trim_pages), client)
+            )
+            trim_tex = sanitise_latex(trim_tex)
+            trim_tex = adjust_margin(trim_tex, 0.25)
+            ok, trimmed_pdf, _ = compile_tex(trim_tex, RESUMES_DIR, pdf_filename)
+            if ok and get_page_count(trimmed_pdf) == 1:
+                tex_content = trim_tex
+                pdf_path = trimmed_pdf
+                logger.info("Visual OVERFLOW content trim recovered 1-page layout")
+            elif ok:
+                # Still overflowing — try minimum margins as last resort
+                tex_content = adjust_margin(trim_tex, 0.20)
+                ok2, new_pdf2, _ = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+                if ok2:
+                    pdf_path = new_pdf2
         else:
             break
 
