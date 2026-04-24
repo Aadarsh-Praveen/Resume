@@ -8,8 +8,18 @@ careers portal (jobs.massgeneralbrigham.org), which runs on iCIMS.
 import logging
 import time
 import requests
+from config import ROLE_KEYWORDS, EXCLUDE_KEYWORDS
 
 logger = logging.getLogger(__name__)
+
+
+def _is_relevant(title: str) -> bool:
+    t = title.lower()
+    if not any(kw in t for kw in ROLE_KEYWORDS):
+        return False
+    if any(kw in t for kw in EXCLUDE_KEYWORDS):
+        return False
+    return True
 
 _ICIMS_BASE = "https://careers-massgeneralbrigham.icims.com"
 _SEARCH_URL = f"{_ICIMS_BASE}/jobs/search"
@@ -95,6 +105,8 @@ def _map_icims_job(j: dict) -> dict | None:
 
     if not title or not url:
         return None
+    if not _is_relevant(title):
+        return None
 
     return {
         "title": title,
@@ -126,7 +138,7 @@ def _parse_icims_html(html: str, limit: int) -> list[dict]:
         location_el = row.select_one(".iCIMS_JobsTableLocation, [class*='location']")
         location = location_el.get_text(strip=True) if location_el else "Boston, MA"
 
-        if title and href:
+        if title and href and _is_relevant(title):
             jobs.append({
                 "title": title,
                 "company": "Mass General Brigham",

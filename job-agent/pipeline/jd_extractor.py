@@ -226,12 +226,18 @@ def extract_jd_text(url: str) -> str:
 
     Raises:
         requests.RequestException: if the URL cannot be fetched after retries.
-        ValueError: if the extracted text is suspiciously short (< 100 chars).
+        ValueError: if the extracted text is suspiciously short (< 100 chars),
+                    or if the job is no longer accepting applications.
     """
     source = _detect_source(url)
     logger.info("Extracting JD from %s (detected: %s)", url, source)
 
     html = _fetch_html(url)
+
+    # Detect closed/expired postings before parsing (works for LinkedIn and others)
+    if "no longer accepting applications" in html.lower():
+        raise ValueError("CLOSED: job is no longer accepting applications")
+
     selector = _SELECTORS.get(source)
     text = _clean_text(html, selector)
 

@@ -208,6 +208,15 @@ def run_collection_cycle() -> int:
         if not job.get("jd_text"):
             try:
                 job["jd_text"] = extract_jd_text(job["url"])
+            except ValueError as e:
+                if "CLOSED" in str(e):
+                    logger.info(
+                        "Skipping %s at %s — no longer accepting applications",
+                        title, company,
+                    )
+                    continue
+                logger.warning("JD extraction failed for %s: %s", job["url"], e)
+                job["jd_text"] = ""
             except Exception as e:
                 logger.warning("JD extraction failed for %s: %s", job["url"], e)
                 job["jd_text"] = ""

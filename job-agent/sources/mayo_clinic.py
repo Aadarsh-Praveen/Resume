@@ -8,8 +8,18 @@ Fetches Data Science / ML / AI jobs from Mayo Clinic's careers portal
 import logging
 import time
 import requests
+from config import ROLE_KEYWORDS, EXCLUDE_KEYWORDS
 
 logger = logging.getLogger(__name__)
+
+
+def _is_relevant(title: str) -> bool:
+    t = title.lower()
+    if not any(kw in t for kw in ROLE_KEYWORDS):
+        return False
+    if any(kw in t for kw in EXCLUDE_KEYWORDS):
+        return False
+    return True
 
 _BASE = "https://jobs.mayoclinic.org"
 _SEARCH_URL = f"{_BASE}/search-jobs"
@@ -123,7 +133,7 @@ def _parse_taleo_page(html: str, limit: int) -> list[dict]:
         if not href.startswith("http"):
             href = _BASE + href
 
-        if title and href:
+        if title and href and _is_relevant(title):
             jobs.append({
                 "title": title,
                 "company": company,

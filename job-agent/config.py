@@ -318,6 +318,13 @@ EXCLUDE_KEYWORDS = [
     "data analyst",      # separate from data scientist
     "business analyst",
     "data engineer",     # remove if you want these too
+    # Academic / clinical leadership roles (common on hospital/research portals)
+    "professor",
+    "faculty",
+    "postdoc",
+    "fellow",            # research fellow / clinical fellow
+    "coordinator",
+    "clinician",
 ]
 
 # ── Resume tailoring Claude prompt ───────────────────────────────────────────
