@@ -63,6 +63,10 @@ from sources.email_parser import watch_linkedin_alerts
 from sources.linkedin_jobs import fetch_linkedin_jobs
 from sources.workday_api import fetch_workday_jobs
 from sources.custom_careers import fetch_custom_career_jobs
+from sources.yc_jobs import fetch_yc_jobs
+from sources.wellfound import fetch_wellfound_jobs
+from sources.mass_general import fetch_mass_general_jobs
+from sources.mayo_clinic import fetch_mayo_clinic_jobs
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
@@ -216,6 +220,38 @@ def run_collection_cycle() -> int:
         all_new_jobs.extend(jobs)
     except Exception as e:
         logger.error("Custom career pages failed: %s", e)
+
+    # Source 9: YC Work at a Startup
+    try:
+        jobs = fetch_yc_jobs()
+        all_new_jobs.extend(jobs)
+        logger.info("YC: %d jobs collected", len(jobs))
+    except Exception as e:
+        logger.error("YC jobs failed: %s", e)
+
+    # Source 10: Wellfound
+    try:
+        jobs = fetch_wellfound_jobs()
+        all_new_jobs.extend(jobs)
+        logger.info("Wellfound: %d jobs collected", len(jobs))
+    except Exception as e:
+        logger.error("Wellfound jobs failed: %s", e)
+
+    # Source 11: Mass General Brigham
+    try:
+        jobs = fetch_mass_general_jobs()
+        all_new_jobs.extend(jobs)
+        logger.info("Mass General Brigham: %d jobs collected", len(jobs))
+    except Exception as e:
+        logger.error("Mass General Brigham failed: %s", e)
+
+    # Source 12: Mayo Clinic
+    try:
+        jobs = fetch_mayo_clinic_jobs()
+        all_new_jobs.extend(jobs)
+        logger.info("Mayo Clinic: %d jobs collected", len(jobs))
+    except Exception as e:
+        logger.error("Mayo Clinic failed: %s", e)
 
     # Deduplicate and insert
     inserted = 0

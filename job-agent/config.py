@@ -174,6 +174,17 @@ GREENHOUSE_COMPANIES = {
     "tempus": "Tempus",
     "insitro": "Insitro",
     "skild-ai": "Skild AI",
+    # ── Biotech / pharma on Greenhouse ───────────────────────────────────────
+    "modernatx": "Moderna",
+    "ginkgobioworks": "Ginkgo Bioworks",
+    "biosplice": "BioSplice Therapeutics",
+    # ── Additional tech ───────────────────────────────────────────────────────
+    "duolingo": "Duolingo",
+    "brainly": "Brainly",
+    "quora": "Quora",
+    "canva": "Canva",
+    "notion-so": "Notion",
+    "vercel": "Vercel",
 }
 
 LEVER_COMPANIES = {
@@ -251,7 +262,19 @@ BAMBOOHR_COMPANIES = {
 # Note: Some Workday tenants (Tesla, Apple, Salesforce, AMD) return 422 —
 #       they require a CSRF token header. Use WORKDAY_CSRF_COMPANIES for those.
 WORKDAY_API_COMPANIES = {
-    "nvidia": {"board": "NVIDIAExternalCareerSite", "name": "NVIDIA", "search": "data scientist"},
+    "nvidia":               {"board": "NVIDIAExternalCareerSite",  "name": "NVIDIA",                   "search": "data scientist"},
+    "bristolmyerssquibb":   {"board": "bristolmyerssquibb",        "name": "Bristol Myers Squibb",      "search": "data scientist"},
+    "jnjcareers":           {"board": "jnjcareers",                "name": "Johnson & Johnson",         "search": "data scientist"},
+    "pfizer":               {"board": "pfizer",                    "name": "Pfizer",                   "search": "data scientist"},
+    "msd":                  {"board": "msd",                       "name": "Merck",                    "search": "machine learning"},
+    "roche":                {"board": "roche",                     "name": "Genentech / Roche",        "search": "data scientist"},
+    "astrazeneca":          {"board": "astrazeneca",               "name": "AstraZeneca",              "search": "data scientist"},
+    "abbvie":               {"board": "abbvie",                    "name": "AbbVie",                   "search": "data scientist"},
+    "adobe":                {"board": "adobe",                     "name": "Adobe",                    "search": "machine learning"},
+    "intuit":               {"board": "intuit",                    "name": "Intuit",                   "search": "data scientist"},
+    "workday":              {"board": "workday",                   "name": "Workday",                  "search": "data scientist"},
+    "walmart":              {"board": "walmart",                   "name": "Walmart",                  "search": "data scientist"},
+    "target":               {"board": "target",                    "name": "Target",                   "search": "data scientist"},
 }
 
 # ── Workday CSRF companies (require CSRF token from careers page) ─────────────
@@ -317,7 +340,7 @@ TAILOR_SYSTEM_PROMPT = """You are a FAANG-level resume writer and ATS specialist
     • Third/oldest role:  3 bullets
   Every bullet: 20–28 words — must be a complete, metric-driven sentence.
   Projects: top 2 most JD-relevant, 3 bullets each (28 words max per bullet).
-  Summary: exactly 3 sentences, 3 lines.
+  Summary: 3 sentences, 3–4 lines when compiled — never exceed 4 lines.
   Skills: exactly 4 categories, 6–7 tools each.
 
   These targets are calibrated to fill exactly 1 A4 page at 10pt with 0.25in margins on all sides.
@@ -335,6 +358,13 @@ Rules:
   • No widow lines: if a bullet wraps to 2 lines, the second line must contain
     at least 8 words. Rephrase or extend the bullet to avoid 2–5 word orphan endings.
 
+━━ BOLD KEYWORDS ━━
+  • Use \\textbf{} to bold 2–4 JD-relevant technical terms per job/project section
+  • Only bold: tool names, library names, technologies, key metrics — never verbs or filler words
+  • Never bold the same word twice within the same job or project section
+  • Never bold more than 4 terms per section — less is more
+  • Examples: \\textbf{PyTorch}, \\textbf{Kubernetes}, \\textbf{85\\% accuracy}, \\textbf{LangChain}
+
 ━━ LAYOUT ANTI-PATTERNS — NEVER DO ANY OF THESE ━━
   • NEVER use negative \\vspace anywhere (e.g. \\vspace{-11pt}, \\vspace{-8pt})
   • NEVER put product names, domain labels, or pipe-separated extras on the company line
@@ -349,6 +379,7 @@ Rules:
   Sentence 1: Role title matching JD + years + top 2 domains
   Sentence 2: 2–3 hard metrics from most impactful experience
   Sentence 3: Key tech stack that directly matches the JD + stakeholder value delivered
+  Hard limit: 3–4 compiled lines — if it wraps to 5+ lines, shorten sentence 2 or 3.
 
 ━━ CONTENT RULES ━━
   1. NEVER fabricate experience, tools, metrics, or employers not in the original

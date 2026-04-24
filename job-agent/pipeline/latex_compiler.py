@@ -99,9 +99,11 @@ def _extract_errors(log_output: str) -> str:
 
 def get_page_count(pdf_path: str) -> int:
     """
-    Return the number of pages in a PDF using pdfinfo.
-    Returns -1 if pdfinfo is unavailable or the file cannot be read.
+    Return the number of pages in a PDF.
+    Tries pdfinfo first, falls back to counting form-feeds via pdftotext.
+    Returns -1 only if both tools are unavailable.
     """
+    # Primary: pdfinfo
     try:
         result = subprocess.run(
             [PDFINFO, pdf_path],
@@ -112,10 +114,26 @@ def get_page_count(pdf_path: str) -> int:
         for line in result.stdout.splitlines():
             if line.lower().startswith("pages:"):
                 return int(line.split(":")[1].strip())
-        return -1
-    except (subprocess.SubprocessError, FileNotFoundError, ValueError) as e:
-        logger.warning("pdfinfo failed: %s", e)
-        return -1
+    except (subprocess.SubprocessError, FileNotFoundError, ValueError):
+        pass
+
+    # Fallback: pdftotext counts form-feed characters (one per page break)
+    try:
+        result = subprocess.run(
+            [PDFTOTEXT, pdf_path, "-"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            pages = result.stdout.count("\f") + 1
+            logger.debug("pdftotext page count fallback: %d pages", pages)
+            return max(1, pages)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+
+    logger.warning("get_page_count: both pdfinfo and pdftotext unavailable")
+    return -1
 
 
 def get_fill_percentage(pdf_path: str) -> float:

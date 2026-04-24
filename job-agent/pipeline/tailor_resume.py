@@ -116,7 +116,7 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
         f"2. Second role: exactly 3 bullets\n"
         f"3. Third/oldest role: exactly 3 bullets\n"
         f"4. Projects: 2 projects × exactly 3 bullets each\n"
-        f"5. Summary: exactly 3 sentences\n"
+        f"5. Summary: exactly 3 sentences, 3–4 lines — never exceed 4 lines\n"
         f"6. Skills: 4 categories × 6–7 tools each\n"
         f"7. DO NOT add a Certifications or Publications section — they overflow the page.\n\n"
         f"Every bullet: 20–28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
@@ -136,7 +136,7 @@ def _build_trim_prompt(long_tex: str, page_count: int) -> str:
         f"3. Most recent role: max 4 bullets. Second role: max 3 bullets. Oldest role: max 3 bullets.\n"
         f"4. Every bullet: hard cap of 22 words — count and truncate any that exceed this.\n"
         f"5. Projects: keep top 2 most JD-relevant only, 3 bullets each, 22 words max per bullet.\n"
-        f"6. Summary: exactly 3 sentences, 3 lines max.\n"
+        f"6. Summary: exactly 3 sentences, 3–4 lines max — never exceed 4 lines.\n"
         f"7. Skills: max 4 categories, 6 tools each — drop entire categories not needed.\n"
         f"8. Company line format: CompanyName \\\\hfill City, ST — NO pipes, NO product names.\n\n"
         f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words — rephrase to avoid 2–5 word orphan endings.\n"
@@ -165,6 +165,12 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
     Returns (is_good, feedback) where is_good=True means the page looks correct.
     Falls back to (True, "no preview") if render_preview is unavailable.
     """
+    # Fast path: if page count > 1, skip vision and return OVERFLOW immediately
+    pages = get_page_count(pdf_path)
+    if pages > 1:
+        logger.warning("_claude_verify_page: %d pages detected — OVERFLOW", pages)
+        return False, "OVERFLOW"
+
     jpeg_path = render_preview(pdf_path)
     if not jpeg_path or not os.path.exists(jpeg_path):
         logger.warning("_claude_verify_page: no preview available — assuming OK")
@@ -350,6 +356,22 @@ def tailor_resume(
                 "Job #%d: Claude says SHORT (fill ~%.0f%%) — expanding (attempt %d)",
                 job_id, fill * 100, visual_attempt + 1,
             )
+            # First try widening margins (0.25 → 0.27 → 0.28) — no content change needed
+            margin_fixed = False
+            for margin in [0.27, 0.28]:
+                test_tex = adjust_margin(tex_content, margin)
+                ok, test_pdf, _ = compile_tex(test_tex, RESUMES_DIR, pdf_filename)
+                if ok and get_page_count(test_pdf) == 1:
+                    test_fill = get_fill_percentage(test_pdf)
+                    if test_fill >= 0.85:
+                        tex_content = test_tex
+                        pdf_path = test_pdf
+                        margin_fixed = True
+                        logger.info("Margin %.2fin filled page to %.0f%%", margin, test_fill * 100)
+                        break
+            if margin_fixed:
+                break
+            # Margin didn't help — ask Claude to add content
             expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
             tex_content = _extract_tex(_call_claude(expand_prompt, client))
             tex_content = sanitise_latex(tex_content)
