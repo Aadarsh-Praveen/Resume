@@ -70,94 +70,13 @@ from sources.mayo_clinic import fetch_mayo_clinic_jobs
 from outputs.tracker import log_application
 from outputs.telegram_alert import send_alert, send_error_alert, send_daily_digest
 from outputs.recruiter_finder import find_recruiter, draft_cold_email
+from pipeline.location_filter import is_us_or_remote
 from config import POLL_INTERVAL_HOURS, GMAIL_POLL_MINUTES, DAILY_DIGEST_HOUR, YOE_MAX_FILTER, LOCATION_FILTER, ROLE_KEYWORDS, EXCLUDE_KEYWORDS
 
 DB_PATH = os.getenv("DB_PATH", "db/jobs.db")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
 FAILED_LOG = "failed_jobs.log"
 
-# ── US location detection ──────────────────────────────────────────────────────
-
-_US_STATE_ABBREVS = {
-    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga",
-    "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
-    "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj",
-    "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
-    "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy", "dc",
-}
-
-_US_STATE_NAMES = {
-    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
-    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
-    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
-    "maine", "maryland", "massachusetts", "michigan", "minnesota",
-    "mississippi", "missouri", "montana", "nebraska", "nevada",
-    "new hampshire", "new jersey", "new mexico", "new york",
-    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
-    "pennsylvania", "rhode island", "south carolina", "south dakota",
-    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
-    "west virginia", "wisconsin", "wyoming", "district of columbia",
-}
-
-
-def _is_us_or_remote(location: str) -> bool:
-    """
-    Return True if the location is US-based, remote, or unspecified.
-
-    Handles formats from all job sources:
-      - "San Francisco, CA"       → True  (state abbreviation)
-      - "New York City, NY"       → True
-      - "United States"           → True
-      - "US, CA, Santa Clara"     → True  (Workday NVIDIA format)
-      - "2 Locations"             → True  (Workday multi-location)
-      - "Remote"                  → True
-      - ""                        → True  (blank = no restriction)
-      - "Bengaluru, India"        → False
-      - "London, UK"              → False
-      - "São Paulo, Brazil"       → False
-    """
-    if not location or not location.strip():
-        return True  # blank = remote / no restriction
-
-    loc = location.strip().lower()
-
-    if "remote" in loc:
-        return True
-
-    # Explicit US markers
-    if "united states" in loc or loc in ("us", "usa"):
-        return True
-    if loc.startswith("us,") or ", us," in loc or loc.endswith(", us"):
-        return True
-
-    # LinkedIn metro area formats: "San Francisco Bay Area", "Greater New York City Area", etc.
-    _US_METRO_MARKERS = {
-        "bay area", "san francisco", "new york", "los angeles", "seattle",
-        "boston", "chicago", "austin", "denver", "atlanta", "miami",
-        "washington, d", "silicon valley", "greater", "triangle",
-        "twin cities", "greater philadelphia", "greater chicago",
-    }
-    if any(m in loc for m in _US_METRO_MARKERS):
-        return True
-
-    # US state abbreviation pattern: "City, CA" or "City, NY"
-    # Use word boundary so ", in" doesn't match inside "india" etc.
-    import re as _re
-    for abbr in _US_STATE_ABBREVS:
-        if _re.search(rf", {abbr}\b", loc):
-            return True
-
-    # US state full name anywhere in the string
-    for name in _US_STATE_NAMES:
-        if name in loc:
-            return True
-
-    # "N Locations" (Workday multi-location badge) — let through
-    import re
-    if re.match(r"^\d+\s+location", loc):
-        return True
-
-    return False
 
 
 # ── Job collection ─────────────────────────────────────────────────────────────
@@ -278,7 +197,7 @@ def run_collection_cycle() -> int:
 
         # ── Location filter ───────────────────────────────────────────────
         if LOCATION_FILTER:
-            if not _is_us_or_remote(job.get("location", "")):
+            if not is_us_or_remote(job.get("location", "")):
                 logger.info(
                     "Skipping %s at %s — location '%s' outside filter",
                     title, company, job.get("location"),

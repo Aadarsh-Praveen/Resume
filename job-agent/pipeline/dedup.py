@@ -112,6 +112,11 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN fit_reason TEXT",
     "ALTER TABLE jobs ADD COLUMN manual_review INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN application_status TEXT",
+    """CREATE TABLE IF NOT EXISTS location_cache (
+        location    TEXT PRIMARY KEY,
+        is_us       INTEGER NOT NULL,
+        cached_at   TEXT NOT NULL
+    )""",
 ]
 
 # PostgreSQL: ADD COLUMN IF NOT EXISTS is idempotent (PG 9.6+)
@@ -126,6 +131,11 @@ _MIGRATIONS_PG = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manual_review INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT",
+    """CREATE TABLE IF NOT EXISTS location_cache (
+        location    TEXT PRIMARY KEY,
+        is_us       BOOLEAN NOT NULL,
+        cached_at   TEXT NOT NULL
+    )""",
 ]
 
 
@@ -255,6 +265,34 @@ def _init_pg():
                 _x(c, migration)
         except Exception:
             pass  # column/index already exists
+
+
+# ── Location cache functions ──────────────────────────────────────────────────
+
+def get_cached_location(location: str) -> bool | None:
+    """Return cached is_us value, or None if not cached."""
+    try:
+        with _conn() as c:
+            row = _x(c, "SELECT is_us FROM location_cache WHERE location = ?",
+                     (location,)).fetchone()
+            if row is not None:
+                return bool(row[0])
+    except Exception:
+        pass
+    return None
+
+
+def cache_location(location: str, is_us: bool) -> None:
+    """Persist a geocoded location result to the cache."""
+    now = datetime.utcnow().isoformat()
+    try:
+        with _conn() as c:
+            _x(c,
+               "INSERT INTO location_cache (location, is_us, cached_at) VALUES (?, ?, ?)"
+               " ON CONFLICT (location) DO UPDATE SET is_us = excluded.is_us, cached_at = excluded.cached_at",
+               (location, 1 if is_us else 0, now))
+    except Exception as e:
+        logger.debug("location_cache write failed (non-fatal): %s", e)
 
 
 # ── Job functions ─────────────────────────────────────────────────────────────
