@@ -515,6 +515,14 @@ def main() -> None:
     os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
     os.makedirs(RESUMES_DIR, exist_ok=True)
 
+    # Log which database is active so it's visible in GitHub Actions logs
+    _db_url = os.getenv("DATABASE_URL", "")
+    if _db_url:
+        _masked = _db_url[:30] + "..." if len(_db_url) > 30 else _db_url
+        logger.info("Database: PostgreSQL (%s)", _masked)
+    else:
+        logger.info("Database: SQLite (%s) — set DATABASE_URL to use PostgreSQL", DB_PATH)
+
     # Initialise database
     init_db(DB_PATH)
 
