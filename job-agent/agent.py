@@ -130,6 +130,16 @@ def _is_us_or_remote(location: str) -> bool:
     if loc.startswith("us,") or ", us," in loc or loc.endswith(", us"):
         return True
 
+    # LinkedIn metro area formats: "San Francisco Bay Area", "Greater New York City Area", etc.
+    _US_METRO_MARKERS = {
+        "bay area", "san francisco", "new york", "los angeles", "seattle",
+        "boston", "chicago", "austin", "denver", "atlanta", "miami",
+        "washington, d", "silicon valley", "greater", "triangle",
+        "twin cities", "greater philadelphia", "greater chicago",
+    }
+    if any(m in loc for m in _US_METRO_MARKERS):
+        return True
+
     # US state abbreviation pattern: "City, CA" or "City, NY"
     # Use word boundary so ", in" doesn't match inside "india" etc.
     import re as _re
