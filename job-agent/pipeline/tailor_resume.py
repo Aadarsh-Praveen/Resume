@@ -24,6 +24,7 @@ from config import (
     ATS_SCORE_MAX,
     MAX_RETRIES,
     MAX_PAGE_RETRIES,
+    OPUS_COMPANIES,
 )
 from pipeline.latex_compiler import (
     compile_tex, get_page_count, get_fill_percentage,
@@ -240,12 +241,30 @@ def _call_claude(
     client: anthropic.Anthropic,
     system: str = TAILOR_SYSTEM_PROMPT,
     max_tokens: int = 4096,
+    model: str = "claude-sonnet-4-6",
 ) -> str:
-    """Make a Claude API call and return the text response."""
+    """Make a Claude API call and return the text response.
+
+    When system is TAILOR_SYSTEM_PROMPT (the default), it is sent with
+    cache_control so Anthropic stores it after the first call.  Every
+    subsequent call in the same pipeline run pays the cache-read rate
+    (~10× cheaper) instead of re-processing the full prompt.
+    """
+    # Wrap the system prompt in a content block so we can attach cache_control.
+    # Only cache the main tailoring prompt — small one-off prompts don't benefit.
+    if system is TAILOR_SYSTEM_PROMPT:
+        system_content = [{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }]
+    else:
+        system_content = system
+
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=max_tokens,
-        system=system,
+        system=system_content,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
@@ -286,14 +305,22 @@ def tailor_resume(
 
     base_tex = load_base_resume()
     include_certs = _jd_mentions_certifications(jd_text)
+
+    # Route top-tier companies through Opus for best possible resume quality
+    company_lower = company.lower()
+    _model = (
+        "claude-opus-4-7"
+        if any(name in company_lower for name in OPUS_COMPANIES)
+        else "claude-sonnet-4-6"
+    )
     logger.info(
-        "Starting tailoring for job #%d: %s at %s (certs: %s)",
-        job_id, role, company, include_certs,
+        "Starting tailoring for job #%d: %s at %s (certs: %s, model: %s)",
+        job_id, role, company, include_certs, _model,
     )
 
     # ── Step 1: Initial tailoring call ───────────────────────────────────────
     prompt = _build_tailoring_prompt(base_tex, jd_text, include_certs)
-    tex_content = _extract_tex(_call_claude(prompt, client))
+    tex_content = _extract_tex(_call_claude(prompt, client, model=_model))
     tex_content = sanitise_latex(tex_content)
     tex_content = adjust_margin(tex_content, 0.25)  # uniform 0.25in all sides from the start
 
@@ -312,7 +339,7 @@ def tailor_resume(
 
         logger.warning("Compile attempt %d failed — asking Claude to fix", compile_attempt + 1)
         fix_prompt = _build_fix_compile_prompt(tex_content, error_log)
-        tex_content = _extract_tex(_call_claude(fix_prompt, client))
+        tex_content = _extract_tex(_call_claude(fix_prompt, client, model=_model))
         tex_content = sanitise_latex(tex_content)
 
     logger.info("PDF compiled: %s", pdf_path)
@@ -349,7 +376,7 @@ def tailor_resume(
 
         logger.warning("Resume is %d pages — asking Claude to trim", pages)
         trim_prompt = _build_trim_prompt(tex_content, pages)
-        tex_content = _extract_tex(_call_claude(trim_prompt, client))
+        tex_content = _extract_tex(_call_claude(trim_prompt, client, model=_model))
         tex_content = sanitise_latex(tex_content)
         tex_content = adjust_margin(tex_content, 0.25)  # re-lock margins after trim
 
@@ -388,7 +415,7 @@ def tailor_resume(
                 break
             # Margin didn't help — ask Claude to add content
             expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
-            tex_content = _extract_tex(_call_claude(expand_prompt, client))
+            tex_content = _extract_tex(_call_claude(expand_prompt, client, model=_model))
             tex_content = sanitise_latex(tex_content)
             success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
             if not success:
@@ -404,7 +431,7 @@ def tailor_resume(
                     job_id, new_pages,
                 )
                 recover_tex = _extract_tex(
-                    _call_claude(_build_trim_prompt(tex_content, new_pages), client)
+                    _call_claude(_build_trim_prompt(tex_content, new_pages), client, model=_model)
                 )
                 recover_tex = sanitise_latex(recover_tex)
                 recover_tex = adjust_margin(recover_tex, 0.25)
@@ -426,7 +453,7 @@ def tailor_resume(
             pages_actual = get_page_count(pdf_path)
             trim_pages = pages_actual if pages_actual > 1 else 2
             trim_tex = _extract_tex(
-                _call_claude(_build_trim_prompt(tex_content, trim_pages), client)
+                _call_claude(_build_trim_prompt(tex_content, trim_pages), client, model=_model)
             )
             trim_tex = sanitise_latex(trim_tex)
             trim_tex = adjust_margin(trim_tex, 0.25)
@@ -471,7 +498,7 @@ def tailor_resume(
         missing = get_missing_keywords(pdf_path, jd_text, client)
         logger.info("ATS retry %d — missing %d keywords", ats_attempt + 1, len(missing))
         retry_prompt = _build_ats_retry_prompt(tex_content, missing, ats_score)
-        tex_content = _extract_tex(_call_claude(retry_prompt, client))
+        tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_model))
         tex_content = sanitise_latex(tex_content)
 
         # Recompile after keyword injection — next loop iteration re-scores
