@@ -11,6 +11,22 @@
     return res.json();
   }
 
+  // Fetch every row from a paginated endpoint by stepping through pages.
+  // Stops when a page returns fewer rows than PAGE_SIZE.
+  const PAGE_SIZE = 250;
+  async function fetchAll(basePath) {
+    const sep = basePath.includes('?') ? '&' : '?';
+    const results = [];
+    let offset = 0;
+    while (true) {
+      const page = await apiFetch(`${basePath}${sep}limit=${PAGE_SIZE}&offset=${offset}`);
+      results.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    return results;
+  }
+
   // ── Formatters ──────────────────────────────────────────────────────────────
 
   function fmtDate(iso) {
@@ -135,14 +151,14 @@
 
     async appliedRows() {
       const [applied, approved] = await Promise.all([
-        apiFetch('/api/jobs?approval_status=applied&limit=500'),
-        apiFetch('/api/jobs?approval_status=approved&limit=500'),
+        fetchAll('/api/jobs?approval_status=applied'),
+        fetchAll('/api/jobs?approval_status=approved'),
       ]);
       return [...applied, ...approved].map(mapJobToRow);
     },
 
     async preparedRows() {
-      const jobs = await apiFetch('/api/jobs?limit=500');
+      const jobs = await fetchAll('/api/jobs');
       return jobs.map(mapJobToRow);
     },
 
