@@ -191,11 +191,6 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
         logger.warning("_claude_verify_page: %d pages detected — OVERFLOW", pages)
         return False, "OVERFLOW"
 
-    fill = get_fill_percentage(pdf_path)
-    if 0.82 <= fill <= 0.96:
-        logger.info("_claude_verify_page: fill=%.0f%% in target range — skipping vision call", fill * 100)
-        return True, "FULL"
-
     jpeg_path = render_preview(pdf_path)
     if not jpeg_path or not os.path.exists(jpeg_path):
         logger.warning("_claude_verify_page: no preview available — assuming OK")
