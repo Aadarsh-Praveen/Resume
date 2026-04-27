@@ -53,6 +53,7 @@ from pipeline.dedup import (
     init_db, is_duplicate, insert_job,
     get_unprocessed_jobs, mark_processed, get_todays_processed_jobs,
     set_cover_letter, set_fit_reason, insert_recruiter,
+    cleanup_bad_recruiters,
 )
 from pipeline.fit_filter import assess_fit
 from pipeline.jd_extractor import extract_jd_text, extract_min_years
@@ -375,6 +376,14 @@ def run_pipeline() -> tuple[int, int]:
     _lock = threading.Lock()
 
     def _collector():
+        # First: drain any unprocessed jobs left over from previous runs
+        backlog = get_unprocessed_jobs(DB_PATH)
+        if backlog:
+            logger.info("Backlog: %d unprocessed jobs from previous runs — queuing now", len(backlog))
+            for job in backlog:
+                job_queue.put(job)
+
+        # Then: collect new jobs from all sources in parallel
         sources = _build_sources()
         with ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="src") as exc:
             futs = {exc.submit(_fetch_source, name, fn): name for name, fn in sources}
@@ -388,7 +397,7 @@ def run_pipeline() -> tuple[int, int]:
         # One sentinel per worker signals end-of-queue
         for _ in range(MAX_PROCESSING_WORKERS):
             job_queue.put(_SENTINEL)
-        logger.info("Collector done — %d jobs queued for processing", inserted_count[0])
+        logger.info("Collector done — %d new jobs + %d backlog queued", inserted_count[0], len(backlog))
 
     def _processor():
         while True:
@@ -568,6 +577,7 @@ def main() -> None:
 
     # Initialise database
     init_db(DB_PATH)
+    cleanup_bad_recruiters(DB_PATH)
 
     if args.daemon:
         run_daemon()

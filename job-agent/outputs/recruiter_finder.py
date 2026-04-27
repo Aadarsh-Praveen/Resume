@@ -48,26 +48,34 @@ def _extract_domain(job_url: str, company_name: str) -> str:
     parsed = urlparse(job_url)
     hostname = parsed.netloc.lower()
 
-    # Skip ATS domains — these don't tell us the company domain
+    # ATS platforms — the hostname tells us nothing about the company
     ats_domains = {
         "boards.greenhouse.io", "jobs.lever.co", "jobs.ashby.com",
         "app.ashbyhq.com", "www.indeed.com", "www.linkedin.com",
         "www.glassdoor.com",
     }
+
+    # Path segments that are NOT company slugs (e.g. LinkedIn /jobs/view/12345)
+    _generic_slugs = {
+        "jobs", "job", "view", "careers", "career", "apply",
+        "position", "posting", "search", "collections",
+    }
+
     for ats in ats_domains:
         if ats in hostname:
-            # Try to extract company from ATS subdomain or path
-            # e.g., jobs.lever.co/stripe → stripe.com
+            # For Lever/Ashby/Greenhouse the first path segment IS the company slug
+            # e.g. jobs.lever.co/stripe/abc → stripe.com
+            # For LinkedIn/Indeed the first segment is a generic word — skip it
             path_parts = parsed.path.strip("/").split("/")
             if path_parts and path_parts[0]:
                 slug = path_parts[0].lower()
-                return f"{slug}.com"
-            break
+                if slug not in _generic_slugs:
+                    return f"{slug}.com"
+            break  # fall through to company-name guess
 
     # Use the actual hostname if it looks like a company career site
     # e.g., careers.stripe.com → stripe.com
     if hostname and hostname not in ats_domains:
-        # Remove common career subdomain prefixes
         for prefix in ("careers.", "jobs.", "work.", "apply."):
             if hostname.startswith(prefix):
                 hostname = hostname[len(prefix):]

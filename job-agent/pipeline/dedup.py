@@ -492,6 +492,24 @@ def get_all_recruiters(
             (limit, offset)))
 
 
+def cleanup_bad_recruiters(db_path: str = DB_PATH) -> int:
+    """
+    Delete recruiter rows that contain Hunter.io placeholder data.
+
+    The jobs.com domain was being extracted from LinkedIn URLs
+    (/jobs/view/...) causing Hunter.io to return a generic demo contact
+    ('Andres Creada' / andres@jobs.com) for every LinkedIn job.
+    This is a one-time cleanup; the underlying bug is now fixed.
+    """
+    with _conn() as c:
+        cur = _x(c,
+            "DELETE FROM recruiters WHERE email LIKE '%@jobs.com' OR name = 'Andres Creada'")
+        deleted = cur.rowcount if hasattr(cur, "rowcount") else 0
+    if deleted:
+        logger.info("Cleaned up %d bad recruiter rows (jobs.com placeholder data)", deleted)
+    return deleted or 0
+
+
 def update_recruiter(
     recruiter_id: int,
     field: str,
