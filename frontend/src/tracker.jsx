@@ -27,14 +27,14 @@ const YesNoPill = ({ yes, labelYes='Sent', labelNo='Pending' }) => (
 
 const StatusPill = ({ status }) => {
   const map = {
-    'Applied':       'success',
-    'Resume Ready':  'success',
-    'Low ATS':       'warn',
-    'Failed':        'danger',
-    'No JD':         'danger',
-    'Skipped':       'warn',
-    'Drafting':      'info',
-    'Not Applied':   'danger',
+    'Applied':       'success',   // green
+    'Resume Ready':  'warn',      // yellow
+    'Low ATS':       'warn',      // yellow
+    'Skipped':       'info',      // blue
+    'Drafting':      'info',      // blue
+    'Failed':        'danger',    // red
+    'No JD':         'danger',    // red
+    'Not Applied':   'danger',    // red
   };
   return <span className={`pill ${map[status] || ''}`}><span className="pill-dot"></span>{status}</span>;
 };
@@ -247,25 +247,22 @@ const TrackerView = () => {
   const handleApprove = async (row) => {
     flash(`Approving ${row.company}…`);
     setSelected(null);
-    // Update in-place — row stays, status changes to Applied
-    const update = r => r.dbId === row.dbId ? { ...r, status: 'Applied', approvalStatus: 'applied' } : r;
-    setPreparedRows(prev => prev.map(update));
+    // Remove from All Tracked Jobs, add to Applied by Agent
+    setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
     const appliedRow = { ...row, id: 'APP-' + row.dbId, status: 'Applied', approvalStatus: 'applied' };
     setAppliedRows(prev => [appliedRow, ...prev]);
     try {
       const res = await fetch(`${window.__API__.base}/api/approve/${row.dbId}`, { method: 'POST' });
       if (!res.ok) {
-        // Revert
-        const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
-        setPreparedRows(prev => prev.map(revert));
+        // Revert — put row back into All Tracked Jobs
+        setPreparedRows(prev => [row, ...prev]);
         setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
         flash('Approve failed — server error.');
       } else {
-        flash(`Approved ${row.company} — marked as Applied.`);
+        flash(`Approved ${row.company} — moved to Applied.`);
       }
     } catch {
-      const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
-      setPreparedRows(prev => prev.map(revert));
+      setPreparedRows(prev => [row, ...prev]);
       setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
       flash('Approve failed — check server.');
     }
@@ -274,21 +271,19 @@ const TrackerView = () => {
   const handleReject = async (row) => {
     flash(`Rejecting ${row.company}…`);
     setSelected(null);
-    // Update in-place — row stays, status changes to Not Applied
-    const update = r => r.dbId === row.dbId ? { ...r, status: 'Not Applied', approvalStatus: 'rejected' } : r;
-    setPreparedRows(prev => prev.map(update));
+    // Remove from All Tracked Jobs immediately
+    setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
     try {
       const res = await fetch(`${window.__API__.base}/api/reject/${row.dbId}`, { method: 'POST' });
       if (!res.ok) {
-        const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
-        setPreparedRows(prev => prev.map(revert));
+        // Revert — put row back
+        setPreparedRows(prev => [row, ...prev]);
         flash('Reject failed — server error.');
       } else {
-        flash(`${row.company} marked as Not Applied.`);
+        flash(`${row.company} rejected and removed.`);
       }
     } catch {
-      const revert = r => r.dbId === row.dbId ? { ...r, status: row.status, approvalStatus: row.approvalStatus } : r;
-      setPreparedRows(prev => prev.map(revert));
+      setPreparedRows(prev => [row, ...prev]);
       flash('Reject failed — check server.');
     }
   };
@@ -362,7 +357,7 @@ const TrackerView = () => {
         <button className={tab === 'prepared' ? 'active' : ''} onClick={() => setTab('prepared')}>
           <Icon name="file" size={13} />
           All Tracked Jobs
-          <span className="tab-count">{preparedRows.length}</span>
+          <span className="tab-count">{preparedRows.filter(r => r.approvalStatus === 'pending_review').length}</span>
         </button>
       </div>
 
