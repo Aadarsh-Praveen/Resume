@@ -30,7 +30,7 @@ from pipeline.latex_compiler import (
     compile_tex, get_page_count, get_fill_percentage,
     sanitise_latex, adjust_margin, render_preview,
 )
-from pipeline.ats_scorer import score_resume, get_missing_keywords
+from pipeline.ats_scorer import score_resume, get_missing_keywords, extract_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +84,19 @@ def _jd_mentions_certifications(jd_text: str) -> bool:
     return any(kw in jd_lower for kw in _CERT_KEYWORDS)
 
 
-def _build_tailoring_prompt(base_tex: str, jd_text: str, include_certs: bool = False) -> str:
+def _build_tailoring_prompt(jd_text: str, include_certs: bool = False) -> str:
+    """Build the initial tailoring prompt.
+
+    The base resume is now in the system (cached), so only the JD goes here.
+    """
     cert_instruction = (
         "The JD explicitly mentions certifications — include the Certifications section at the end."
         if include_certs else
         "DO NOT include a Certifications section — the JD does not require it."
     )
     return (
-        f"Tailor this LaTeX resume for the following job description.\n\n"
+        f"Tailor the master resume (in the system) for the following job description.\n\n"
         f"=== JOB DESCRIPTION ===\n{jd_text[:5000]}\n\n"
-        f"=== CURRENT RESUME (.tex) ===\n{base_tex}\n\n"
         f"CERTIFICATIONS RULE: {cert_instruction}\n"
         f"PUBLICATIONS RULE: DO NOT include a Publications section — omit it entirely.\n\n"
         f"Return ONLY the complete tailored .tex file — no explanations."
@@ -176,16 +179,22 @@ def _build_ats_retry_prompt(current_tex: str, missing_keywords: list[str], score
 
 def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[bool, str]:
     """
-    Use Claude Haiku vision to verify the resume is exactly 1 full page.
+    Verify the resume is exactly 1 full page.
 
-    Returns (is_good, feedback) where is_good=True means the page looks correct.
-    Falls back to (True, "no preview") if render_preview is unavailable.
+    Fast-path order (cheapest first):
+      1. Page count > 1 → OVERFLOW (no vision call)
+      2. Page count == 1 and fill 82–96% → FULL (no vision call)
+      3. Otherwise → Haiku vision call
     """
-    # Fast path: if page count > 1, skip vision and return OVERFLOW immediately
     pages = get_page_count(pdf_path)
     if pages > 1:
         logger.warning("_claude_verify_page: %d pages detected — OVERFLOW", pages)
         return False, "OVERFLOW"
+
+    fill = get_fill_percentage(pdf_path)
+    if 0.82 <= fill <= 0.96:
+        logger.info("_claude_verify_page: fill=%.0f%% in target range — skipping vision call", fill * 100)
+        return True, "FULL"
 
     jpeg_path = render_preview(pdf_path)
     if not jpeg_path or not os.path.exists(jpeg_path):
@@ -242,22 +251,26 @@ def _call_claude(
     system: str = TAILOR_SYSTEM_PROMPT,
     max_tokens: int = 4096,
     model: str = "claude-sonnet-4-6",
+    cached_base_tex: Optional[str] = None,
 ) -> str:
     """Make a Claude API call and return the text response.
 
-    When system is TAILOR_SYSTEM_PROMPT (the default), it is sent with
-    cache_control so Anthropic stores it after the first call.  Every
-    subsequent call in the same pipeline run pays the cache-read rate
-    (~10× cheaper) instead of re-processing the full prompt.
+    TAILOR_SYSTEM_PROMPT is always sent with cache_control (ephemeral).
+    When ``cached_base_tex`` is provided it is added as a second cached
+    content block in the system — this lets all parallel jobs in the same
+    5-minute window share the same base resume cache entry (~10× cheaper
+    on that block after the first write).
     """
-    # Wrap the system prompt in a content block so we can attach cache_control.
-    # Only cache the main tailoring prompt — small one-off prompts don't benefit.
     if system is TAILOR_SYSTEM_PROMPT:
-        system_content = [{
-            "type": "text",
-            "text": system,
-            "cache_control": {"type": "ephemeral"},
-        }]
+        system_content = [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}},
+        ]
+        if cached_base_tex:
+            system_content.append({
+                "type": "text",
+                "text": f"=== MASTER RESUME (.tex) ===\n{cached_base_tex}",
+                "cache_control": {"type": "ephemeral"},
+            })
     else:
         system_content = system
 
@@ -319,8 +332,11 @@ def tailor_resume(
     )
 
     # ── Step 1: Initial tailoring call ───────────────────────────────────────
-    prompt = _build_tailoring_prompt(base_tex, jd_text, include_certs)
-    tex_content = _extract_tex(_call_claude(prompt, client, model=_model))
+    # base_tex goes in the system (cached) so all retry calls share the cache entry.
+    prompt = _build_tailoring_prompt(jd_text, include_certs)
+    tex_content = _extract_tex(
+        _call_claude(prompt, client, model=_model, cached_base_tex=base_tex)
+    )
     tex_content = sanitise_latex(tex_content)
     tex_content = adjust_margin(tex_content, 0.25)  # uniform 0.25in all sides from the start
 
@@ -472,9 +488,12 @@ def tailor_resume(
             break
 
     # ── Step 4: ATS keyword score gate ───────────────────────────────────────
+    # Extract keywords once — reused by both score_resume and get_missing_keywords
+    # to avoid a duplicate Haiku call on every retry iteration.
+    jd_keywords = extract_keywords(jd_text, client)
     ats_score = 0.0
     for ats_attempt in range(MAX_RETRIES + 1):
-        ats_score = score_resume(pdf_path, jd_text, client)
+        ats_score = score_resume(pdf_path, jd_text, client, keywords=jd_keywords)
 
         if ATS_SCORE_MIN <= ats_score <= ATS_SCORE_MAX:
             logger.info("ATS score %.1f%% — PASS (target: %d–%d%%)", ats_score, ATS_SCORE_MIN, ATS_SCORE_MAX)
@@ -482,8 +501,8 @@ def tailor_resume(
 
         if ats_score > ATS_SCORE_MAX:
             logger.warning(
-                "ATS score %.1f%% exceeds maximum %d%% — possible keyword stuffing, flagging for review",
-                ats_score, ATS_SCORE_MAX,
+                "ATS score %.1f%% exceeds maximum — flagging for review",
+                ats_score,
             )
             break
 
@@ -495,7 +514,7 @@ def tailor_resume(
             )
             break
 
-        missing = get_missing_keywords(pdf_path, jd_text, client)
+        missing = get_missing_keywords(pdf_path, jd_text, client, keywords=jd_keywords)
         logger.info("ATS retry %d — missing %d keywords", ats_attempt + 1, len(missing))
         retry_prompt = _build_ats_retry_prompt(tex_content, missing, ats_score)
         tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_model))

@@ -41,7 +41,7 @@ Job Description:
 
 def extract_keywords(jd_text: str, client: Optional[anthropic.Anthropic] = None) -> dict:
     """
-    Use Claude to extract required and preferred keywords from a JD.
+    Use Claude Haiku to extract required and preferred keywords from a JD.
 
     Returns:
         {"required": [...], "preferred": [...]}
@@ -51,8 +51,8 @@ def extract_keywords(jd_text: str, client: Optional[anthropic.Anthropic] = None)
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
             messages=[
                 {
                     "role": "user",
@@ -131,14 +131,23 @@ def _keyword_matches(resume_text: str, keyword: str) -> bool:
     return False
 
 
-def score_resume(pdf_path: str, jd_text: str, client: Optional[anthropic.Anthropic] = None) -> float:
+def score_resume(
+    pdf_path: str,
+    jd_text: str,
+    client: Optional[anthropic.Anthropic] = None,
+    keywords: Optional[dict] = None,
+) -> float:
     """
     Score a resume PDF against a job description.
+
+    Pass pre-extracted ``keywords`` to avoid a redundant API call when
+    ``get_missing_keywords`` will be called in the same loop iteration.
 
     Returns:
         float 0–100 representing the weighted ATS keyword match score.
     """
-    keywords = extract_keywords(jd_text, client)
+    if keywords is None:
+        keywords = extract_keywords(jd_text, client)
     resume_text = extract_pdf_text(pdf_path)
 
     if not resume_text:
@@ -171,12 +180,20 @@ def score_resume(pdf_path: str, jd_text: str, client: Optional[anthropic.Anthrop
     return round(score, 1)
 
 
-def get_missing_keywords(pdf_path: str, jd_text: str, client: Optional[anthropic.Anthropic] = None) -> list[str]:
+def get_missing_keywords(
+    pdf_path: str,
+    jd_text: str,
+    client: Optional[anthropic.Anthropic] = None,
+    keywords: Optional[dict] = None,
+) -> list[str]:
     """
     Return a list of keywords from the JD that are NOT present in the resume.
     Required keywords are listed first.
+
+    Pass pre-extracted ``keywords`` to skip a redundant API call.
     """
-    keywords = extract_keywords(jd_text, client)
+    if keywords is None:
+        keywords = extract_keywords(jd_text, client)
     resume_text = extract_pdf_text(pdf_path)
 
     missing = []
