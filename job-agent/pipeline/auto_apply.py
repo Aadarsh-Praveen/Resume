@@ -78,10 +78,11 @@ def _greenhouse_answer_custom_questions(
     questions: list[dict],
     jd_text: str,
     profile: dict,
-) -> list[dict]:
+) -> tuple[list[dict], list[str]]:
     """
     Answer custom (non-standard) Greenhouse questions using Claude.
-    Returns list of {"question_id": ..., "text_value": ...} dicts.
+    Returns (answered_list, unanswered_labels) where unanswered_labels contains
+    question labels that Claude could not produce an answer for.
     """
     standard_labels = {
         "first name", "last name", "email", "phone", "resume", "cover letter",
@@ -100,7 +101,7 @@ def _greenhouse_answer_custom_questions(
                 })
 
     if not custom_qs:
-        return []
+        return [], []
 
     try:
         import anthropic
@@ -127,26 +128,28 @@ def _greenhouse_answer_custom_questions(
             if q_match and a_match:
                 answers[q_match.group(1).strip()] = a_match.group(1).strip()
 
-        return [
+        answered = [
             {"question_id": q["question_id"], "text_value": answers.get(q["label"], "")}
             for q in custom_qs
             if answers.get(q["label"])
         ]
+        unanswered = [q["label"] for q in custom_qs if not answers.get(q["label"])]
+        return answered, unanswered
     except Exception as e:
         logger.warning("Custom question answering failed: %s", e)
-        return []
+        return [], [q["label"] for q in custom_qs]
 
 
-def apply_greenhouse(job: dict) -> tuple[bool, str]:
+def apply_greenhouse(job: dict) -> tuple[bool, str, list[str]]:
     """
     Submit a Greenhouse job application.
-    Returns (success, application_id).
+    Returns (success, application_id, unanswered_question_labels).
     """
     url = job.get("url", "")
     slug, job_id = _greenhouse_slug_and_id(url)
     if not slug or not job_id:
         logger.warning("Could not extract Greenhouse slug/job_id from URL: %s", url)
-        return False, ""
+        return False, "", []
 
     profile    = _profile()
     pdf_path   = job.get("pdf_path", "")
@@ -154,13 +157,17 @@ def apply_greenhouse(job: dict) -> tuple[bool, str]:
 
     if not all([profile["first_name"], profile["email"]]):
         logger.warning("Applicant profile incomplete — set APPLICANT_* env vars")
-        return False, ""
+        return False, "", []
     if not pdf_path or not Path(pdf_path).exists():
         logger.warning("Resume PDF not found at: %s", pdf_path)
-        return False, ""
+        return False, "", []
 
-    questions      = _greenhouse_get_questions(slug, job_id)
-    custom_answers = _greenhouse_answer_custom_questions(questions, job.get("jd_text", ""), profile)
+    questions                    = _greenhouse_get_questions(slug, job_id)
+    custom_answers, unanswered_qs = _greenhouse_answer_custom_questions(
+        questions, job.get("jd_text", ""), profile
+    )
+    if unanswered_qs:
+        logger.warning("Could not answer %d custom question(s): %s", len(unanswered_qs), unanswered_qs)
 
     apply_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}/applications"
 
@@ -195,14 +202,14 @@ def apply_greenhouse(job: dict) -> tuple[bool, str]:
             app_id = str(data.get("id", "submitted"))
             logger.info("Greenhouse application submitted: %s @ %s — ID %s",
                         job.get("title"), job.get("company"), app_id)
-            return True, app_id
+            return True, app_id, unanswered_qs
 
         logger.warning("Greenhouse apply returned %d: %s", resp.status_code, resp.text[:300])
-        return False, ""
+        return False, "", unanswered_qs
 
     except Exception as e:
         logger.error("Greenhouse apply exception: %s", e)
-        return False, ""
+        return False, "", unanswered_qs
 
 
 # ── Lever ─────────────────────────────────────────────────────────────────────
@@ -218,16 +225,17 @@ def _lever_slug_and_id(url: str) -> tuple[str, str]:
     return "", ""
 
 
-def apply_lever(job: dict) -> tuple[bool, str]:
+def apply_lever(job: dict) -> tuple[bool, str, list[str]]:
     """
     Submit a Lever job application.
-    Returns (success, application_id).
+    Returns (success, application_id, unanswered_question_labels).
+    Lever forms don't expose custom questions via API, so unanswered is always [].
     """
     url = job.get("url", "")
     slug, posting_id = _lever_slug_and_id(url)
     if not slug or not posting_id:
         logger.warning("Could not extract Lever slug/posting_id from URL: %s", url)
-        return False, ""
+        return False, "", []
 
     profile    = _profile()
     pdf_path   = job.get("pdf_path", "")
@@ -235,10 +243,10 @@ def apply_lever(job: dict) -> tuple[bool, str]:
 
     if not all([profile["first_name"], profile["email"]]):
         logger.warning("Applicant profile incomplete — set APPLICANT_* env vars")
-        return False, ""
+        return False, "", []
     if not pdf_path or not Path(pdf_path).exists():
         logger.warning("Resume PDF not found at: %s", pdf_path)
-        return False, ""
+        return False, "", []
 
     apply_url = f"https://jobs.lever.co/{slug}/{posting_id}/apply"
 
@@ -273,29 +281,29 @@ def apply_lever(job: dict) -> tuple[bool, str]:
         if resp.status_code in (200, 201, 302) and "thank" in resp.url.lower():
             logger.info("Lever application submitted: %s @ %s",
                         job.get("title"), job.get("company"))
-            return True, "lever-submitted"
+            return True, "lever-submitted", []
 
         if resp.status_code in (200, 201):
             logger.info("Lever application likely submitted (status %d): %s",
                         resp.status_code, job.get("company"))
-            return True, "lever-submitted"
+            return True, "lever-submitted", []
 
         logger.warning("Lever apply returned %d: %s", resp.status_code, resp.text[:300])
-        return False, ""
+        return False, "", []
 
     except Exception as e:
         logger.error("Lever apply exception: %s", e)
-        return False, ""
+        return False, "", []
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
-def apply_job(job: dict) -> tuple[bool, str]:
+def apply_job(job: dict) -> tuple[bool, str, list[str]]:
     """
     Detect ATS from job source or URL and dispatch to the right apply function.
-    Returns (success, application_id).
+    Returns (success, application_id, unanswered_question_labels).
 
-    Falls back to (False, "") for unsupported sources — the dashboard
+    Falls back to (False, "", []) for unsupported sources — the dashboard
     marks those as 'approved' so the user can apply manually.
     """
     source = (job.get("source") or "").lower()
@@ -308,4 +316,4 @@ def apply_job(job: dict) -> tuple[bool, str]:
         return apply_lever(job)
 
     logger.info("No auto-apply support for source '%s' — requires manual submission", source)
-    return False, ""
+    return False, "", []

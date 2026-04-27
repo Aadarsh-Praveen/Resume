@@ -188,6 +188,51 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def send_approval_alert(
+    job_dict: dict,
+    success: bool,
+    application_id: str = "",
+    unanswered_questions: Optional[list] = None,
+    bot_token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+) -> bool:
+    """
+    Send a Telegram message after the user approves a job in the dashboard.
+
+    If auto-apply succeeded: confirms submission with application ID.
+    If manual apply needed: sends the job link so user can apply directly.
+    Unanswered custom questions (ones Claude couldn't fill) are listed if any.
+    """
+    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id   = chat_id   or os.getenv("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        return False
+
+    company = job_dict.get("company", "Unknown")
+    title   = job_dict.get("title", "Role")
+    url     = job_dict.get("url", "")
+    source  = (job_dict.get("source") or "").lower()
+
+    if success:
+        lines = [f"✅ <b>Applied: {title} @ {company}</b>"]
+        if application_id and application_id not in ("lever-submitted", "submitted"):
+            lines.append(f"Application ID: <code>{application_id}</code>")
+    else:
+        lines = [f"⚠️ <b>Manual apply needed: {title} @ {company}</b>"]
+        if url:
+            lines.append(f'<a href="{url}">Open job posting →</a>')
+        if source and source not in ("greenhouse", "lever"):
+            lines.append(f"Source: {source} (auto-apply not supported for this platform)")
+
+    if unanswered_questions:
+        lines.append("")
+        lines.append("❓ <b>Questions the agent couldn't answer — fill these manually:</b>")
+        for q in unanswered_questions:
+            lines.append(f"  • {q}")
+
+    return _send_message(bot_token, chat_id, "\n".join(lines))
+
+
 def send_error_alert(
     error_msg: str,
     bot_token: Optional[str] = None,

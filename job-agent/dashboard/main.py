@@ -41,7 +41,9 @@ from pipeline.dedup import (
     get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
     _USE_PG,
 )
+import threading
 from pipeline.auto_apply import apply_job
+from outputs.telegram_alert import send_approval_alert
 
 logger = logging.getLogger(__name__)
 
@@ -207,13 +209,28 @@ async def api_approve(job_id: int):
     job = get_job(job_id, DB_PATH)
     if not job:
         raise HTTPException(404, "Job not found")
-    success, application_id = apply_job(job)
+    success, application_id, unanswered_qs = apply_job(job)
     # Always mark applied so the job stays in the Applied tab regardless
     mark_applied(job_id, application_id if success else None, DB_PATH)
+    # Fire-and-forget Telegram notification (non-blocking)
+    threading.Thread(
+        target=send_approval_alert,
+        args=(job, success, application_id, unanswered_qs),
+        daemon=True,
+    ).start()
     if success:
-        return JSONResponse({"status": "applied", "application_id": application_id})
+        return JSONResponse({
+            "status": "applied",
+            "application_id": application_id,
+            "unanswered_questions": unanswered_qs,
+        })
     else:
-        return JSONResponse({"status": "approved", "note": "auto-apply failed — submit manually"})
+        return JSONResponse({
+            "status": "approved",
+            "note": "auto-apply not supported — submit manually",
+            "job_url": job.get("url", ""),
+            "unanswered_questions": unanswered_qs,
+        })
 
 
 @app.post("/api/reject/{job_id}")

@@ -193,7 +193,7 @@ const TrackerView = () => {
   const [status, setStatus]   = useStateT('all');
   const [sort, setSort]       = useStateT({ key: 'agentTimeRaw', dir: 'desc' });
   const [selected, setSelected] = useStateT(null);
-  const [toast, setToast]     = useStateT('');
+  const [toast, setToast]     = useStateT(null); // { message, type: 'success'|'warn'|'error'|'info' }
   const [appFilter, setAppFilter] = useStateT('all');
 
   const loadData = () => {
@@ -242,12 +242,15 @@ const TrackerView = () => {
     return out;
   }, [rows, q, portal, status, appFilter, sort]);
 
-  const flash = (m) => { setToast(m); setTimeout(() => setToast(''), 2000); };
+  const flash = (message, type = 'info', duration = 3000) => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), duration);
+  };
 
   const handleApprove = async (row) => {
-    flash(`Approving ${row.company}…`);
+    flash(`Submitting ${row.company}…`, 'info');
     setSelected(null);
-    // Remove from All Tracked Jobs, add to Applied by Agent
+    // Optimistic: remove from All Tracked Jobs, add to Applied by Agent
     setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
     const appliedRow = { ...row, id: 'APP-' + row.dbId, status: 'Applied', approvalStatus: 'applied' };
     setAppliedRows(prev => [appliedRow, ...prev]);
@@ -257,19 +260,27 @@ const TrackerView = () => {
         // Revert — put row back into All Tracked Jobs
         setPreparedRows(prev => [row, ...prev]);
         setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
-        flash('Approve failed — server error.');
+        flash('Approve failed — server error.', 'error');
       } else {
-        flash(`Approved ${row.company} — moved to Applied.`);
+        const data = await res.json();
+        if (data.status === 'applied') {
+          const extra = data.unanswered_questions && data.unanswered_questions.length > 0
+            ? ` (${data.unanswered_questions.length} custom question(s) need manual answers — check Telegram)`
+            : '';
+          flash(`✅ Auto-submitted to ${row.company}!${extra}`, 'success', data.unanswered_questions?.length ? 6000 : 4000);
+        } else {
+          flash(`⚠️ Apply manually at ${row.company} — auto-submit not supported. Link sent to Telegram.`, 'warn', 7000);
+        }
       }
     } catch {
       setPreparedRows(prev => [row, ...prev]);
       setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
-      flash('Approve failed — check server.');
+      flash('Approve failed — check server.', 'error');
     }
   };
 
   const handleReject = async (row) => {
-    flash(`Rejecting ${row.company}…`);
+    flash(`Rejecting ${row.company}…`, 'info');
     setSelected(null);
     // Remove from All Tracked Jobs immediately
     setPreparedRows(prev => prev.filter(r => r.dbId !== row.dbId));
@@ -278,22 +289,22 @@ const TrackerView = () => {
       if (!res.ok) {
         // Revert — put row back
         setPreparedRows(prev => [row, ...prev]);
-        flash('Reject failed — server error.');
+        flash('Reject failed — server error.', 'error');
       } else {
-        flash(`${row.company} rejected and removed.`);
+        flash(`${row.company} rejected and removed.`, 'info');
       }
     } catch {
       setPreparedRows(prev => [row, ...prev]);
-      flash('Reject failed — check server.');
+      flash('Reject failed — check server.', 'error');
     }
   };
 
   const handleDownload = (row) => {
     if (row.hasPdf) {
-      flash(`Opening ${row.resume}…`);
+      flash(`Opening ${row.resume}…`, 'info');
       window.open(`${window.__API__.base}/job/${row.dbId}/resume`, '_blank');
     } else {
-      flash('No PDF available for this job.');
+      flash('No PDF available for this job.', 'warn');
     }
   };
 
@@ -519,9 +530,11 @@ const TrackerView = () => {
       {toast && (
         <div style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          background: 'var(--text)', color: 'var(--surface)',
-          padding: '10px 16px', borderRadius: 10, fontSize: 13, boxShadow: 'var(--shadow-lg)', zIndex: 70
-        }}>{toast}</div>
+          background: toast.type === 'success' ? 'var(--success)' : toast.type === 'warn' ? '#b45309' : toast.type === 'error' ? 'var(--danger)' : 'var(--text)',
+          color: '#fff',
+          padding: '10px 20px', borderRadius: 10, fontSize: 13, boxShadow: 'var(--shadow-lg)', zIndex: 70,
+          maxWidth: 480, textAlign: 'center', lineHeight: 1.5,
+        }}>{toast.message}</div>
       )}
     </div>
   );
