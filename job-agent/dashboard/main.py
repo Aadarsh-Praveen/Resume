@@ -60,9 +60,21 @@ _FRONTEND = _HERE.parent.parent / "frontend"         # resume/frontend/
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
+_DB_AVAILABLE = True
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db(DB_PATH)
+    global _DB_AVAILABLE
+    try:
+        init_db(DB_PATH)
+        _DB_AVAILABLE = True
+    except Exception as e:
+        _DB_AVAILABLE = False
+        logger.critical(
+            "Database unavailable at startup (%s). "
+            "Dashboard will return 503 until the DB recovers. Error: %s",
+            "PostgreSQL" if _USE_PG else DB_PATH, e,
+        )
     yield
 
 app = FastAPI(title="Applyflow", lifespan=lifespan)
@@ -73,6 +85,17 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def db_health_gate(request, call_next):
+    """Return 503 for all /api/* routes when the database is unavailable."""
+    if not _DB_AVAILABLE and request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"error": "Database unavailable — check Neon quota or DATABASE_URL"},
+            status_code=503,
+        )
+    return await call_next(request)
 
 
 # ── JSON API ──────────────────────────────────────────────────────────────────

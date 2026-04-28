@@ -135,6 +135,14 @@ CREATE TABLE IF NOT EXISTS pending_answers (
 CREATE INDEX IF NOT EXISTS idx_pending_job ON pending_answers (job_id)
 """
 
+# Explicit column list for jobs — excludes pdf_bytes so PDFs are never
+# pulled over the network except when explicitly requested via get_job_pdf_bytes().
+_JOB_COLS = (
+    "id, title, company, url, jd_text, source, posted_date, processed, ats_score, "
+    "pdf_path, status, created_at, location, cover_letter, approval_status, applied_at, "
+    "application_id, fit_reason, manual_review, application_status"
+)
+
 # SQLite migrations: OperationalError on duplicate column is silently ignored
 _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN location TEXT",
@@ -364,7 +372,7 @@ def insert_job(job: dict, db_path: str = DB_PATH) -> int:
 def get_unprocessed_jobs(db_path: str = DB_PATH) -> list[dict]:
     """Return all jobs where processed = 0."""
     with _conn() as c:
-        return _all(_x(c, "SELECT * FROM jobs WHERE processed = 0 ORDER BY created_at ASC"))
+        return _all(_x(c, f"SELECT {_JOB_COLS} FROM jobs WHERE processed = 0 ORDER BY created_at ASC"))
 
 
 def mark_processed(
@@ -413,7 +421,7 @@ def mark_applied(job_id: int, application_id: str, db_path: str = DB_PATH) -> No
 def get_job(job_id: int, db_path: str = DB_PATH) -> Optional[dict]:
     """Fetch a single job by id (without pdf_bytes)."""
     with _conn() as c:
-        return _one(_x(c, "SELECT * FROM jobs WHERE id = ?", (job_id,)))
+        return _one(_x(c, f"SELECT {_JOB_COLS} FROM jobs WHERE id = ?", (job_id,)))
 
 
 def set_manual_review(job_id: int, value: bool, db_path: str = DB_PATH) -> None:
@@ -439,7 +447,7 @@ def get_job_pdf_bytes(job_id: int) -> Optional[bytes]:
 def get_pending_review_jobs(db_path: str = DB_PATH) -> list[dict]:
     with _conn() as c:
         return _all(_x(c,
-            "SELECT * FROM jobs WHERE processed=1 AND pdf_path IS NOT NULL"
+            f"SELECT {_JOB_COLS} FROM jobs WHERE processed=1 AND pdf_path IS NOT NULL"
             " AND approval_status='pending_review' ORDER BY created_at DESC"))
 
 
@@ -452,10 +460,10 @@ def get_all_jobs(
     with _conn() as c:
         if approval_status:
             return _all(_x(c,
-                "SELECT * FROM jobs WHERE approval_status=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                f"SELECT {_JOB_COLS} FROM jobs WHERE approval_status=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 (approval_status, limit, offset)))
         return _all(_x(c,
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT {_JOB_COLS} FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (limit, offset)))
 
 
@@ -472,7 +480,7 @@ def get_todays_processed_jobs(db_path: str = DB_PATH) -> list[dict]:
     today = datetime.utcnow().date().isoformat()
     with _conn() as c:
         return _all(_x(c,
-            "SELECT * FROM jobs WHERE processed=1 AND created_at LIKE ?",
+            f"SELECT {_JOB_COLS} FROM jobs WHERE processed=1 AND created_at LIKE ?",
             (f"{today}%",)))
 
 
