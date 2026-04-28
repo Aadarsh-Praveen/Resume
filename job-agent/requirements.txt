@@ -19,6 +19,8 @@ python-multipart>=0.0.9
 pg8000>=1.30
 # Pure-Python PDF page counter (no poppler/system tools needed)
 pypdf>=4.0.0
+# YAML config (profile.yaml)
+pyyaml>=6.0
 # Testing
 pytest>=8.0.0
 pytest-mock>=3.10.0

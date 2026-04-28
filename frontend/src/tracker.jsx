@@ -183,10 +183,133 @@ const Drawer = ({ row, kind, onClose, onDownload, onToggleReview, onApprove, onR
   );
 };
 
+// ── Pending Questions Tab ─────────────────────────────────────────────────────
+
+const QuestionField = ({ q, value, onChange }) => {
+  if (q.fieldType === 'multi_value_single_select' || q.fieldType === 'single_select') {
+    return (
+      <select
+        className="sel"
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', marginTop: 4 }}
+      >
+        <option value="">— Select an answer —</option>
+        {(q.options || []).map(o => (
+          <option key={o.value ?? o.label} value={o.label}>{o.label}</option>
+        ))}
+      </select>
+    );
+  }
+  if (q.fieldType === 'boolean') {
+    return (
+      <select
+        className="sel"
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', marginTop: 4 }}
+      >
+        <option value="">— Select —</option>
+        <option value="Yes">Yes</option>
+        <option value="No">No</option>
+      </select>
+    );
+  }
+  if (q.fieldType === 'textarea') {
+    return (
+      <textarea
+        rows={3}
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Your answer…"
+        style={{ width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 6,
+          border: '1px solid var(--border)', background: 'var(--surface-2)',
+          color: 'var(--text)', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+      />
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      placeholder="Your answer…"
+      style={{ width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 6,
+        border: '1px solid var(--border)', background: 'var(--surface-2)',
+        color: 'var(--text)', fontSize: 13, boxSizing: 'border-box' }}
+    />
+  );
+};
+
+const PendingJobCard = ({ job, onSubmit, submitting }) => {
+  const [answers, setAnswers] = useStateT(() => {
+    const init = {};
+    (job.questions || []).forEach(q => { init[q.id] = ''; });
+    return init;
+  });
+
+  const setAnswer = (id, val) => setAnswers(prev => ({ ...prev, [id]: val }));
+
+  const allRequired = (job.questions || []).filter(q => q.required);
+  const allFilled = allRequired.every(q => (answers[q.id] || '').trim() !== '');
+
+  const handleSubmit = () => {
+    const payload = Object.entries(answers)
+      .filter(([, v]) => v.trim() !== '')
+      .map(([id, answer]) => ({ id: Number(id), answer }));
+    onSubmit(job.dbId, payload);
+  };
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: 20, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <span className="pill accent">{job.portal}</span>
+            <span className="pill warn"><span className="pill-dot"></span>Needs Input</span>
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>{job.position}</div>
+          <div style={{ color: 'var(--text-2)', fontSize: 13 }}>{job.company}</div>
+        </div>
+        <a className="ext-link" href={job.jdUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+          Open JD <Icon name="external" size={11} />
+        </a>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {(job.questions || []).map(q => (
+          <div key={q.id}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+              {q.label}
+              {q.required && <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span>}
+            </div>
+            <QuestionField q={q} value={answers[q.id]} onChange={v => setAnswer(q.id, v)} />
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          className="btn btn-primary"
+          disabled={!allFilled || submitting}
+          onClick={handleSubmit}
+        >
+          <Icon name="check" size={13} />
+          {submitting ? 'Submitting…' : 'Submit Application'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ── Main Tracker ──────────────────────────────────────────────────────────────
+
 const TrackerView = () => {
   const [tab, setTab]         = useStateT('applied');
   const [appliedRows, setAppliedRows] = useStateT([]);
   const [preparedRows, setPreparedRows] = useStateT([]);
+  const [pendingJobs, setPendingJobs] = useStateT([]);
   const [loading, setLoading] = useStateT(true);
   const [q, setQ]             = useStateT('');
   const [portal, setPortal]   = useStateT('all');
@@ -195,11 +318,12 @@ const TrackerView = () => {
   const [selected, setSelected] = useStateT(null);
   const [toast, setToast]     = useStateT(null); // { message, type: 'success'|'warn'|'error'|'info' }
   const [appFilter, setAppFilter] = useStateT('all');
+  const [submittingJob, setSubmittingJob] = useStateT(null);
 
   const loadData = () => {
     const api = window.__API__;
-    Promise.all([api.appliedRows(), api.preparedRows()])
-      .then(([a, p]) => { setAppliedRows(a); setPreparedRows(p); })
+    Promise.all([api.appliedRows(), api.preparedRows(), api.pendingJobs()])
+      .then(([a, p, pj]) => { setAppliedRows(a); setPreparedRows(p); setPendingJobs(pj); })
       .catch(console.warn)
       .finally(() => setLoading(false));
   };
@@ -211,12 +335,14 @@ const TrackerView = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const rows = tab === 'applied' ? appliedRows : preparedRows;
+  const rows = tab === 'applied' ? appliedRows : tab === 'prepared' ? preparedRows : [];
 
   const portals  = useMemo(() => ['all', ...Array.from(new Set(rows.map(r => r.portal)))], [rows]);
   const statuses = tab === 'applied'
     ? ['all', 'Applied', 'Not Applied']
-    : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'Failed', 'No JD', 'Skipped'];
+    : tab === 'pending'
+      ? []
+      : ['all', 'Resume Ready', 'Applied', 'Not Applied', 'Low ATS', 'Failed', 'No JD', 'Skipped'];
   const appStatuses = ['all', 'none', 'Interviewing', 'Accepted', 'Rejected'];
 
   const filtered = useMemo(() => {
@@ -264,12 +390,15 @@ const TrackerView = () => {
       } else {
         const data = await res.json();
         if (data.status === 'applied') {
-          const extra = data.unanswered_questions && data.unanswered_questions.length > 0
-            ? ` (${data.unanswered_questions.length} custom question(s) need manual answers — check Telegram)`
-            : '';
-          flash(`✅ Auto-submitted to ${row.company}!${extra}`, 'success', data.unanswered_questions?.length ? 6000 : 4000);
+          flash(`✅ Auto-submitted to ${row.company}!`, 'success', 4000);
+        } else if (data.status === 'pending_questions') {
+          // Move from prepared to pending tab instead of applied
+          setAppliedRows(prev => prev.filter(r => r.dbId !== row.dbId));
+          flash(`❓ ${data.pending_count} question(s) need your input — see Needs Input tab.`, 'warn', 7000);
+          setTab('pending');
+          loadData();
         } else {
-          flash(`⚠️ Apply manually at ${row.company} — auto-submit not supported. Link sent to Telegram.`, 'warn', 7000);
+          flash(`⚠️ Apply manually at ${row.company} — link sent to Telegram.`, 'warn', 7000);
         }
       }
     } catch {
@@ -296,6 +425,27 @@ const TrackerView = () => {
     } catch {
       setPreparedRows(prev => [row, ...prev]);
       flash('Reject failed — check server.', 'error');
+    }
+  };
+
+  const handleSubmitPending = async (jobId, answers) => {
+    setSubmittingJob(jobId);
+    try {
+      const data = await window.__API__.submitPending(jobId, answers);
+      if (data.status === 'applied') {
+        flash(`✅ Application submitted!`, 'success', 4000);
+        loadData();
+        setTab('applied');
+      } else if (data.status === 'still_pending') {
+        flash(`${data.remaining} required question(s) still unanswered.`, 'warn', 4000);
+        loadData();
+      } else {
+        flash('Submission failed — try applying manually.', 'error', 5000);
+      }
+    } catch {
+      flash('Submission failed — check server.', 'error');
+    } finally {
+      setSubmittingJob(null);
     }
   };
 
@@ -348,7 +498,9 @@ const TrackerView = () => {
     ? 'Loading…'
     : tab === 'applied'
       ? 'No applied jobs yet — run the agent and approve some jobs.'
-      : 'No jobs tracked yet — run the agent to get started.';
+      : tab === 'pending'
+        ? 'No pending questions — you\'re all caught up.'
+        : 'No jobs tracked yet — run the agent to get started.';
 
   return (
     <div data-screen-label="Tracker">
@@ -360,6 +512,16 @@ const TrackerView = () => {
       </div>
 
       <div className="tab-bar">
+        {pendingJobs.length > 0 && (
+          <button className={tab === 'pending' ? 'active' : ''} onClick={() => setTab('pending')}
+            style={{ position: 'relative' }}>
+            <Icon name="alert" size={13} />
+            Needs Input
+            <span className="tab-count" style={{ background: 'var(--danger)', color: '#fff' }}>
+              {pendingJobs.length}
+            </span>
+          </button>
+        )}
         <button className={tab === 'applied' ? 'active' : ''} onClick={() => setTab('applied')}>
           <Icon name="check-circle" size={13} />
           Applied by Agent
@@ -372,7 +534,7 @@ const TrackerView = () => {
         </button>
       </div>
 
-      <div className="toolbar">
+      <div className="toolbar" style={{ display: tab === 'pending' ? 'none' : undefined }}>
         <div className="search">
           <Icon name="search" size={14} />
           <input placeholder="Search company, role, portal…" value={q} onChange={e => setQ(e.target.value)} />
@@ -391,7 +553,24 @@ const TrackerView = () => {
         </div>
       </div>
 
-      <div className="table-wrap">
+      {tab === 'pending' && (
+        <div style={{ padding: '20px 0' }}>
+          {pendingJobs.length === 0 ? (
+            <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              No pending questions — you're all caught up.
+            </div>
+          ) : pendingJobs.map(job => (
+            <PendingJobCard
+              key={job.dbId}
+              job={job}
+              submitting={submittingJob === job.dbId}
+              onSubmit={handleSubmitPending}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="table-wrap" style={{ display: tab === 'pending' ? 'none' : undefined }}>
         <div className="table-scroll">
           {filtered.length === 0 ? (
             <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>

@@ -101,6 +101,40 @@ CREATE INDEX IF NOT EXISTS idx_recruiter_job     ON recruiters (job_id);
 CREATE INDEX IF NOT EXISTS idx_recruiter_company ON recruiters (company)
 """
 
+_PENDING_SCHEMA_SQLITE = """
+CREATE TABLE IF NOT EXISTS pending_answers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id      INTEGER NOT NULL,
+    field_name  TEXT    NOT NULL,
+    label       TEXT    NOT NULL,
+    field_type  TEXT    NOT NULL,
+    options     TEXT,
+    required    INTEGER NOT NULL DEFAULT 0,
+    answer      TEXT,
+    answered_by TEXT,
+    created_at  TEXT    NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_job ON pending_answers (job_id)
+"""
+
+_PENDING_SCHEMA_PG = """
+CREATE TABLE IF NOT EXISTS pending_answers (
+    id          SERIAL  PRIMARY KEY,
+    job_id      INTEGER NOT NULL,
+    field_name  TEXT    NOT NULL,
+    label       TEXT    NOT NULL,
+    field_type  TEXT    NOT NULL,
+    options     TEXT,
+    required    INTEGER NOT NULL DEFAULT 0,
+    answer      TEXT,
+    answered_by TEXT,
+    created_at  TEXT    NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_job ON pending_answers (job_id)
+"""
+
 # SQLite migrations: OperationalError on duplicate column is silently ignored
 _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN location TEXT",
@@ -247,6 +281,7 @@ def _init_sqlite():
     with _conn() as c:
         _run_script(c, _SCHEMA_SQLITE)
         _run_script(c, _RECRUITER_SCHEMA_SQLITE)
+        _run_script(c, _PENDING_SCHEMA_SQLITE)
         for migration in _MIGRATIONS_SQLITE:
             try:
                 c.execute(migration)
@@ -258,6 +293,7 @@ def _init_pg():
     with _conn() as c:
         _run_script(c, _SCHEMA_PG)
         _run_script(c, _RECRUITER_SCHEMA_PG)
+        _run_script(c, _PENDING_SCHEMA_PG)
     # Each migration in its own transaction — PG aborts on any error
     for migration in _MIGRATIONS_PG:
         try:
@@ -586,6 +622,122 @@ def get_funnel_data(db_path: str = DB_PATH) -> dict:
         prepared   = _x(c, "SELECT COUNT(*) FROM jobs WHERE processed=1 AND pdf_path IS NOT NULL").fetchone()[0]
         applied    = _x(c, "SELECT COUNT(*) FROM jobs WHERE approval_status IN ('applied', 'approved')").fetchone()[0]
     return {"discovered": discovered, "prepared": prepared, "applied": applied}
+
+
+# ── Pending answers functions ─────────────────────────────────────────────────
+
+def save_pending_questions(job_id: int, questions: list[dict], db_path: str = DB_PATH) -> None:
+    """
+    Persist all classified questions for a job (answered + unanswered).
+    Replaces any existing rows for this job so re-approving is idempotent.
+    """
+    import json as _json
+    now = datetime.utcnow().isoformat()
+    with _conn() as c:
+        _x(c, "DELETE FROM pending_answers WHERE job_id = ?", (job_id,))
+        for q in questions:
+            options_json = _json.dumps(q["options"]) if q.get("options") else None
+            _insert(c,
+                "INSERT INTO pending_answers "
+                "(job_id, field_name, label, field_type, options, required, answer, answered_by, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    job_id,
+                    q["field_name"],
+                    q["label"],
+                    q["field_type"],
+                    options_json,
+                    1 if q.get("required") else 0,
+                    q.get("answer"),
+                    q.get("answered_by"),
+                    now,
+                ),
+            )
+
+
+def get_pending_questions(job_id: int, db_path: str = DB_PATH) -> list[dict]:
+    """Return all questions for a job (both answered and unanswered)."""
+    import json as _json
+    with _conn() as c:
+        rows = _all(_x(c,
+            "SELECT * FROM pending_answers WHERE job_id = ? ORDER BY id ASC", (job_id,)))
+    for r in rows:
+        if r.get("options"):
+            try:
+                r["options"] = _json.loads(r["options"])
+            except Exception:
+                r["options"] = []
+    return rows
+
+
+def get_unanswered_questions(job_id: int, db_path: str = DB_PATH) -> list[dict]:
+    """Return questions that still need a user answer (answer IS NULL)."""
+    import json as _json
+    with _conn() as c:
+        rows = _all(_x(c,
+            "SELECT * FROM pending_answers WHERE job_id = ? AND answer IS NULL ORDER BY id ASC",
+            (job_id,)))
+    for r in rows:
+        if r.get("options"):
+            try:
+                r["options"] = _json.loads(r["options"])
+            except Exception:
+                r["options"] = []
+    return rows
+
+
+def get_jobs_with_pending_questions(db_path: str = DB_PATH) -> list[dict]:
+    """Return jobs that have at least one unanswered question, with question list."""
+    import json as _json
+    with _conn() as c:
+        job_ids = _all(_x(c,
+            "SELECT DISTINCT job_id FROM pending_answers WHERE answer IS NULL"))
+        if not job_ids:
+            return []
+        ids = [r["job_id"] for r in job_ids]
+        placeholders = ",".join("?" * len(ids))
+        jobs = _all(_x(c,
+            f"SELECT id, title, company, url, source FROM jobs WHERE id IN ({placeholders})",
+            tuple(ids)))
+        q_rows = _all(_x(c,
+            f"SELECT * FROM pending_answers WHERE job_id IN ({placeholders}) AND answer IS NULL ORDER BY id ASC",
+            tuple(ids)))
+
+    q_map: dict[int, list] = {}
+    for q in q_rows:
+        if q.get("options"):
+            try:
+                q["options"] = _json.loads(q["options"])
+            except Exception:
+                q["options"] = []
+        q_map.setdefault(q["job_id"], []).append(q)
+
+    result = []
+    for job in jobs:
+        result.append({**job, "questions": q_map.get(job["id"], [])})
+    return result
+
+
+def answer_question(answer_id: int, answer: str, db_path: str = DB_PATH) -> None:
+    """Save a user-provided answer for a pending question."""
+    with _conn() as c:
+        _x(c,
+           "UPDATE pending_answers SET answer = ?, answered_by = 'user' WHERE id = ?",
+           (answer, answer_id))
+
+
+def delete_pending_questions(job_id: int, db_path: str = DB_PATH) -> None:
+    """Remove all pending questions for a job after successful submission."""
+    with _conn() as c:
+        _x(c, "DELETE FROM pending_answers WHERE job_id = ?", (job_id,))
+
+
+def count_unanswered(job_id: int, db_path: str = DB_PATH) -> int:
+    """Return the number of unanswered questions for a job."""
+    with _conn() as c:
+        return _x(c,
+            "SELECT COUNT(*) FROM pending_answers WHERE job_id = ? AND answer IS NULL",
+            (job_id,)).fetchone()[0]
 
 
 def get_portal_mix(db_path: str = DB_PATH) -> list[dict]:

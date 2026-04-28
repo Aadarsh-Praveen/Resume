@@ -1,20 +1,24 @@
 """
 Auto-apply to Greenhouse and Lever jobs via their form POST endpoints.
 
-Flow:
-  1. Detect ATS from job URL or source field
-  2. Fetch required form fields from the job's question endpoint
-  3. Build multipart form data (resume PDF + cover letter + profile fields)
-  4. POST the application
-  5. Return (success, application_id)
+Flow (Greenhouse):
+  1. User clicks Approve in dashboard  →  api_approve fires
+  2. Fetch Greenhouse form questions
+  3. Classify every question (profile.yaml / Claude / EEO / pending)
+  4. Save all classifications to pending_answers DB table
+  5a. If every required question has an answer → POST the application now
+  5b. If any required question is unanswered   → return status "pending_questions"
+       Dashboard shows the unanswered questions; user fills them in + clicks Submit
+  6. submit_pending_answers() is called from the dashboard endpoint — loads all
+     answers from DB and POSTs the final application
 
-Both Greenhouse and Lever applications only fire AFTER user approves on the dashboard.
+Lever: no public question API; standard fields only. Always submits directly.
+Other sources: no auto-apply support; returns status "no_autoapply".
 """
 
 import logging
 import os
 import re
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +29,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30
+
 
 # ── Applicant profile from .env ───────────────────────────────────────────────
 
@@ -39,31 +44,27 @@ def _profile() -> dict:
     }
 
 
-# ── Greenhouse ────────────────────────────────────────────────────────────────
+# ── Greenhouse URL parsing ────────────────────────────────────────────────────
 
 def _greenhouse_slug_and_id(url: str) -> tuple[str, str]:
     """
     Extract (slug, job_id) from a Greenhouse job URL.
-    Handles formats:
+    Handles:
       https://boards.greenhouse.io/stripe/jobs/12345
       https://job-boards.greenhouse.io/stripe/jobs/12345
       https://careers.stripe.com/?gh_jid=12345
     """
-    # Standard Greenhouse board URL
     m = re.search(r"greenhouse\.io/([^/]+)/jobs/(\d+)", url)
     if m:
         return m.group(1), m.group(2)
-    # Company career page with ?gh_jid= or &gh_jid=
     m2 = re.search(r"gh_jid=(\d+)", url)
     if m2:
-        # Need slug too — try to fetch the page and extract it
-        # For now return empty slug and rely on caller to handle
         return "", m2.group(1)
     return "", ""
 
 
 def _greenhouse_get_questions(slug: str, job_id: str) -> list[dict]:
-    """Fetch required form fields from Greenhouse questions API."""
+    """Fetch form questions from Greenhouse Job Board API."""
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}?questions=true"
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)
@@ -74,82 +75,62 @@ def _greenhouse_get_questions(slug: str, job_id: str) -> list[dict]:
         return []
 
 
-def _greenhouse_answer_custom_questions(
-    questions: list[dict],
-    jd_text: str,
+# ── Form POST builder ─────────────────────────────────────────────────────────
+
+def _build_form_fields(
     profile: dict,
-) -> tuple[list[dict], list[str]]:
+    pdf_path: str,
+    cover_text: str,
+    answered_questions: list[dict],
+) -> dict:
     """
-    Answer custom (non-standard) Greenhouse questions using Claude.
-    Returns (answered_list, unanswered_labels) where unanswered_labels contains
-    question labels that Claude could not produce an answer for.
+    Build the multipart form fields dict for a Greenhouse application POST.
+    answered_questions: rows from pending_answers with non-null answer.
     """
-    standard_labels = {
-        "first name", "last name", "email", "phone", "resume", "cover letter",
-        "linkedin profile", "website", "location", "city", "state", "country",
+    files = {
+        "job_application[first_name]":        (None, profile["first_name"]),
+        "job_application[last_name]":         (None, profile["last_name"]),
+        "job_application[email]":             (None, profile["email"]),
+        "job_application[phone]":             (None, profile["phone"]),
+        "job_application[cover_letter_text]": (None, cover_text or ""),
     }
-    custom_qs = []
-    for q in questions:
-        label = q.get("label", "").lower().strip()
-        if label in standard_labels:
-            continue
-        for field in q.get("fields", []):
-            if field.get("type") in ("input_text", "textarea"):
-                custom_qs.append({
-                    "question_id": field.get("name") or q.get("id"),
-                    "label": q.get("label", ""),
-                })
+    if profile["linkedin_url"]:
+        files["job_application[linkedin_profile_url]"] = (None, profile["linkedin_url"])
+    if profile["portfolio_url"]:
+        files["job_application[website]"] = (None, profile["portfolio_url"])
 
-    if not custom_qs:
-        return [], []
+    # Attach resume PDF separately (caller opens the file)
+    # (handled by caller so the file handle stays valid during POST)
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic()
-        q_list = "\n".join(f"- {q['label']}" for q in custom_qs)
-        prompt = (
-            f"Answer these job application questions for the applicant.\n\n"
-            f"Applicant: {profile['first_name']} {profile['last_name']}\n"
-            f"Job description excerpt:\n{jd_text[:2000]}\n\n"
-            f"Questions:\n{q_list}\n\n"
-            f"For each question, give a concise 1-2 sentence answer. "
-            f"Format: QUESTION: <label>\nANSWER: <answer>\n---"
-        )
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = msg.content[0].text
-        answers = {}
-        for block in text.split("---"):
-            q_match = re.search(r"QUESTION:\s*(.+)", block)
-            a_match = re.search(r"ANSWER:\s*(.+)", block, re.DOTALL)
-            if q_match and a_match:
-                answers[q_match.group(1).strip()] = a_match.group(1).strip()
+    for i, q in enumerate(answered_questions):
+        qid = q["field_name"]
+        ans = q["answer"]
+        files[f"job_application[answers_attributes][{i}][question_id]"] = (None, str(qid))
+        files[f"job_application[answers_attributes][{i}][text_value]"]  = (None, str(ans))
 
-        answered = [
-            {"question_id": q["question_id"], "text_value": answers.get(q["label"], "")}
-            for q in custom_qs
-            if answers.get(q["label"])
-        ]
-        unanswered = [q["label"] for q in custom_qs if not answers.get(q["label"])]
-        return answered, unanswered
-    except Exception as e:
-        logger.warning("Custom question answering failed: %s", e)
-        return [], [q["label"] for q in custom_qs]
+    return files
 
 
-def apply_greenhouse(job: dict) -> tuple[bool, str, list[str]]:
+# ── Greenhouse apply ──────────────────────────────────────────────────────────
+
+def apply_greenhouse(job: dict, client=None) -> dict:
     """
-    Submit a Greenhouse job application.
-    Returns (success, application_id, unanswered_question_labels).
+    Classify Greenhouse form questions and submit if all answerable.
+
+    Returns dict with keys:
+      status          "applied" | "pending_questions" | "failed" | "no_autoapply"
+      application_id  str (on success)
+      pending_count   int (number of unanswered questions)
+      total_count     int
     """
+    from pipeline.question_classifier import classify_and_answer
+    from pipeline.dedup import save_pending_questions, count_unanswered
+
     url = job.get("url", "")
     slug, job_id = _greenhouse_slug_and_id(url)
     if not slug or not job_id:
-        logger.warning("Could not extract Greenhouse slug/job_id from URL: %s", url)
-        return False, "", []
+        logger.warning("Could not extract Greenhouse slug/job_id from: %s", url)
+        return {"status": "no_autoapply", "application_id": "", "pending_count": 0, "total_count": 0}
 
     profile    = _profile()
     pdf_path   = job.get("pdf_path", "")
@@ -157,39 +138,65 @@ def apply_greenhouse(job: dict) -> tuple[bool, str, list[str]]:
 
     if not all([profile["first_name"], profile["email"]]):
         logger.warning("Applicant profile incomplete — set APPLICANT_* env vars")
-        return False, "", []
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
     if not pdf_path or not Path(pdf_path).exists():
         logger.warning("Resume PDF not found at: %s", pdf_path)
-        return False, "", []
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
 
-    questions                    = _greenhouse_get_questions(slug, job_id)
-    custom_answers, unanswered_qs = _greenhouse_answer_custom_questions(
-        questions, job.get("jd_text", ""), profile
+    questions = _greenhouse_get_questions(slug, job_id)
+    if not questions:
+        logger.info("No questions returned for %s — submitting standard fields only", job.get("company"))
+
+    classified = classify_and_answer(
+        questions,
+        jd_text=job.get("jd_text", ""),
+        resume_text=_load_resume_text(pdf_path),
+        client=client,
     )
-    if unanswered_qs:
-        logger.warning("Could not answer %d custom question(s): %s", len(unanswered_qs), unanswered_qs)
+
+    # Persist all classifications (answered + pending) to DB
+    db_id = job.get("id") or job.get("db_id")
+    if db_id:
+        save_pending_questions(int(db_id), classified)
+
+    unanswered = [q for q in classified if q["answer"] is None]
+    required_unanswered = [q for q in unanswered if q["required"]]
+
+    if required_unanswered:
+        logger.info(
+            "%s — %d required question(s) need user input before applying",
+            job.get("company"), len(required_unanswered),
+        )
+        return {
+            "status":       "pending_questions",
+            "application_id": "",
+            "pending_count": len(unanswered),
+            "total_count":   len(classified),
+        }
+
+    # All required questions answered — submit now
+    answered = [q for q in classified if q["answer"] is not None]
+    return _post_greenhouse(job, slug, job_id, profile, pdf_path, cover_text, answered)
+
+
+def _post_greenhouse(
+    job: dict,
+    slug: str,
+    job_id: str,
+    profile: dict,
+    pdf_path: str,
+    cover_text: str,
+    answered_questions: list[dict],
+) -> dict:
+    """POST the Greenhouse application form. Returns result dict."""
+    from pipeline.dedup import delete_pending_questions
 
     apply_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}/applications"
+    files     = _build_form_fields(profile, pdf_path, cover_text, answered_questions)
 
     try:
         with open(pdf_path, "rb") as pdf_file:
-            files = {
-                "job_application[first_name]":    (None, profile["first_name"]),
-                "job_application[last_name]":     (None, profile["last_name"]),
-                "job_application[email]":         (None, profile["email"]),
-                "job_application[phone]":         (None, profile["phone"]),
-                "job_application[resume]":        (Path(pdf_path).name, pdf_file, "application/pdf"),
-                "job_application[cover_letter_text]": (None, cover_text),
-            }
-            if profile["linkedin_url"]:
-                files["job_application[linkedin_profile_url]"] = (None, profile["linkedin_url"])
-            if profile["portfolio_url"]:
-                files["job_application[website]"] = (None, profile["portfolio_url"])
-
-            for i, ans in enumerate(custom_answers):
-                files[f"job_application[answers_attributes][{i}][question_id]"] = (None, str(ans["question_id"]))
-                files[f"job_application[answers_attributes][{i}][text_value]"]  = (None, ans["text_value"])
-
+            files["job_application[resume]"] = (Path(pdf_path).name, pdf_file, "application/pdf")
             resp = requests.post(
                 apply_url,
                 files=files,
@@ -198,55 +205,79 @@ def apply_greenhouse(job: dict) -> tuple[bool, str, list[str]]:
             )
 
         if resp.status_code in (200, 201):
-            data = resp.json() if resp.content else {}
+            data   = resp.json() if resp.content else {}
             app_id = str(data.get("id", "submitted"))
-            logger.info("Greenhouse application submitted: %s @ %s — ID %s",
+            logger.info("Greenhouse applied: %s @ %s — ID %s",
                         job.get("title"), job.get("company"), app_id)
-            return True, app_id, unanswered_qs
+            db_id = job.get("id") or job.get("db_id")
+            if db_id:
+                delete_pending_questions(int(db_id))
+            return {"status": "applied", "application_id": app_id,
+                    "pending_count": 0, "total_count": len(answered_questions)}
 
-        logger.warning("Greenhouse apply returned %d: %s", resp.status_code, resp.text[:300])
-        return False, "", unanswered_qs
+        logger.warning("Greenhouse POST returned %d: %s", resp.status_code, resp.text[:300])
+        return {"status": "failed", "application_id": "", "pending_count": 0,
+                "total_count": len(answered_questions)}
 
     except Exception as e:
         logger.error("Greenhouse apply exception: %s", e)
-        return False, "", unanswered_qs
+        return {"status": "failed", "application_id": "", "pending_count": 0,
+                "total_count": len(answered_questions)}
 
 
-# ── Lever ─────────────────────────────────────────────────────────────────────
-
-def _lever_slug_and_id(url: str) -> tuple[str, str]:
+def submit_pending_answers(job: dict) -> dict:
     """
-    Extract (slug, posting_id) from a Lever job URL.
-    Format: https://jobs.lever.co/{slug}/{uuid}
+    Called from the dashboard after the user has filled in pending questions.
+    Loads all answers from DB and re-submits the Greenhouse form.
     """
-    m = re.search(r"jobs\.lever\.co/([^/]+)/([a-f0-9-]{36})", url)
-    if m:
-        return m.group(1), m.group(2)
-    return "", ""
+    from pipeline.dedup import get_pending_questions
 
-
-def apply_lever(job: dict) -> tuple[bool, str, list[str]]:
-    """
-    Submit a Lever job application.
-    Returns (success, application_id, unanswered_question_labels).
-    Lever forms don't expose custom questions via API, so unanswered is always [].
-    """
-    url = job.get("url", "")
-    slug, posting_id = _lever_slug_and_id(url)
-    if not slug or not posting_id:
-        logger.warning("Could not extract Lever slug/posting_id from URL: %s", url)
-        return False, "", []
+    url  = job.get("url", "")
+    slug, job_id = _greenhouse_slug_and_id(url)
+    if not slug or not job_id:
+        return {"status": "no_autoapply", "application_id": "", "pending_count": 0, "total_count": 0}
 
     profile    = _profile()
     pdf_path   = job.get("pdf_path", "")
     cover_text = job.get("cover_letter", "")
 
     if not all([profile["first_name"], profile["email"]]):
-        logger.warning("Applicant profile incomplete — set APPLICANT_* env vars")
-        return False, "", []
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
     if not pdf_path or not Path(pdf_path).exists():
-        logger.warning("Resume PDF not found at: %s", pdf_path)
-        return False, "", []
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
+
+    db_id = job.get("id") or job.get("db_id")
+    all_qs = get_pending_questions(int(db_id)) if db_id else []
+    answered = [q for q in all_qs if q["answer"] is not None]
+
+    return _post_greenhouse(job, slug, job_id, profile, pdf_path, cover_text, answered)
+
+
+# ── Lever ─────────────────────────────────────────────────────────────────────
+
+def _lever_slug_and_id(url: str) -> tuple[str, str]:
+    m = re.search(r"jobs\.lever\.co/([^/]+)/([a-f0-9-]{36})", url)
+    if m:
+        return m.group(1), m.group(2)
+    return "", ""
+
+
+def apply_lever(job: dict) -> dict:
+    """Submit a Lever job application (standard fields only). Returns result dict."""
+    url = job.get("url", "")
+    slug, posting_id = _lever_slug_and_id(url)
+    if not slug or not posting_id:
+        logger.warning("Could not extract Lever slug/posting_id from: %s", url)
+        return {"status": "no_autoapply", "application_id": "", "pending_count": 0, "total_count": 0}
+
+    profile    = _profile()
+    pdf_path   = job.get("pdf_path", "")
+    cover_text = job.get("cover_letter", "")
+
+    if not all([profile["first_name"], profile["email"]]):
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
+    if not pdf_path or not Path(pdf_path).exists():
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
 
     apply_url = f"https://jobs.lever.co/{slug}/{posting_id}/apply"
 
@@ -257,7 +288,7 @@ def apply_lever(job: dict) -> tuple[bool, str, list[str]]:
                 "name":     (None, full_name),
                 "email":    (None, profile["email"]),
                 "phone":    (None, profile["phone"]),
-                "comments": (None, cover_text),
+                "comments": (None, cover_text or ""),
                 "resume":   (Path(pdf_path).name, pdf_file, "application/pdf"),
             }
             if profile["linkedin_url"]:
@@ -277,43 +308,56 @@ def apply_lever(job: dict) -> tuple[bool, str, list[str]]:
                 allow_redirects=True,
             )
 
-        # Lever returns a redirect to a "thank you" page on success
         if resp.status_code in (200, 201, 302) and "thank" in resp.url.lower():
-            logger.info("Lever application submitted: %s @ %s",
-                        job.get("title"), job.get("company"))
-            return True, "lever-submitted", []
+            logger.info("Lever applied: %s @ %s", job.get("title"), job.get("company"))
+            return {"status": "applied", "application_id": "lever-submitted",
+                    "pending_count": 0, "total_count": 0}
 
         if resp.status_code in (200, 201):
-            logger.info("Lever application likely submitted (status %d): %s",
-                        resp.status_code, job.get("company"))
-            return True, "lever-submitted", []
+            logger.info("Lever applied (status %d): %s", resp.status_code, job.get("company"))
+            return {"status": "applied", "application_id": "lever-submitted",
+                    "pending_count": 0, "total_count": 0}
 
-        logger.warning("Lever apply returned %d: %s", resp.status_code, resp.text[:300])
-        return False, "", []
+        logger.warning("Lever POST returned %d: %s", resp.status_code, resp.text[:300])
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
 
     except Exception as e:
         logger.error("Lever apply exception: %s", e)
-        return False, "", []
+        return {"status": "failed", "application_id": "", "pending_count": 0, "total_count": 0}
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
-def apply_job(job: dict) -> tuple[bool, str, list[str]]:
+def apply_job(job: dict, client=None) -> dict:
     """
-    Detect ATS from job source or URL and dispatch to the right apply function.
-    Returns (success, application_id, unanswered_question_labels).
+    Detect ATS and dispatch to the right apply function.
 
-    Falls back to (False, "", []) for unsupported sources — the dashboard
-    marks those as 'approved' so the user can apply manually.
+    Returns dict:
+      status          "applied" | "pending_questions" | "failed" | "no_autoapply"
+      application_id  str
+      pending_count   int
+      total_count     int
     """
     source = (job.get("source") or "").lower()
     url    = (job.get("url") or "").lower()
 
     if source == "greenhouse" or "greenhouse.io" in url or "gh_jid" in url:
-        return apply_greenhouse(job)
+        return apply_greenhouse(job, client=client)
 
     if source == "lever" or "lever.co" in url:
         return apply_lever(job)
 
-    logger.info("No auto-apply support for source '%s' — requires manual submission", source)
-    return False, "", []
+    logger.info("No auto-apply for source '%s' — manual submission required", source)
+    return {"status": "no_autoapply", "application_id": "", "pending_count": 0, "total_count": 0}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _load_resume_text(pdf_path: str) -> str:
+    """Extract text from resume PDF for Claude context (best-effort)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(pdf_path)
+        return "\n".join(p.extract_text() or "" for p in reader.pages)[:3000]
+    except Exception:
+        return ""

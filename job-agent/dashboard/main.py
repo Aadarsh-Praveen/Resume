@@ -39,11 +39,13 @@ from pipeline.dedup import (
     get_stats, set_approval, mark_applied, set_manual_review, set_application_status,
     get_all_recruiters, get_recruiter_stats, get_recruiter, update_recruiter,
     get_weekly_submissions, get_ats_distribution, get_funnel_data, get_portal_mix,
+    get_jobs_with_pending_questions, get_pending_questions, answer_question,
+    count_unanswered, delete_pending_questions,
     _USE_PG,
 )
 import threading
-from pipeline.auto_apply import apply_job
-from outputs.telegram_alert import send_approval_alert
+from pipeline.auto_apply import apply_job, submit_pending_answers
+from outputs.telegram_alert import send_approval_alert, send_pending_questions_alert
 
 logger = logging.getLogger(__name__)
 
@@ -209,28 +211,110 @@ async def api_approve(job_id: int):
     job = get_job(job_id, DB_PATH)
     if not job:
         raise HTTPException(404, "Job not found")
-    success, application_id, unanswered_qs = apply_job(job)
-    # Always mark applied so the job stays in the Applied tab regardless
-    mark_applied(job_id, application_id if success else None, DB_PATH)
-    # Fire-and-forget Telegram notification (non-blocking)
-    threading.Thread(
-        target=send_approval_alert,
-        args=(job, success, application_id, unanswered_qs),
-        daemon=True,
-    ).start()
-    if success:
+
+    result = apply_job(job)
+    status = result["status"]
+
+    if status == "applied":
+        mark_applied(job_id, result["application_id"], DB_PATH)
+        threading.Thread(
+            target=send_approval_alert,
+            args=(job, True, result["application_id"], []),
+            daemon=True,
+        ).start()
+        return JSONResponse({"status": "applied", "application_id": result["application_id"]})
+
+    if status == "pending_questions":
+        # Don't mark applied yet — user must answer questions first
+        set_approval(job_id, "pending_questions", DB_PATH)
+        pending = get_pending_questions(job_id, DB_PATH)
+        unanswered = [q for q in pending if q["answer"] is None]
+        threading.Thread(
+            target=send_pending_questions_alert,
+            args=(job, len(unanswered)),
+            daemon=True,
+        ).start()
         return JSONResponse({
-            "status": "applied",
-            "application_id": application_id,
-            "unanswered_questions": unanswered_qs,
+            "status": "pending_questions",
+            "pending_count": len(unanswered),
+            "questions": unanswered,
         })
-    else:
+
+    if status == "no_autoapply":
+        mark_applied(job_id, None, DB_PATH)
+        threading.Thread(
+            target=send_approval_alert,
+            args=(job, False, "", []),
+            daemon=True,
+        ).start()
         return JSONResponse({
             "status": "approved",
             "note": "auto-apply not supported — submit manually",
             "job_url": job.get("url", ""),
-            "unanswered_questions": unanswered_qs,
         })
+
+    # failed
+    mark_applied(job_id, None, DB_PATH)
+    return JSONResponse({"status": "failed", "note": "auto-apply encountered an error"})
+
+
+@app.get("/api/pending")
+async def api_pending():
+    """Return jobs that have unanswered questions waiting for user input."""
+    jobs = get_jobs_with_pending_questions(DB_PATH)
+    return JSONResponse(jobs)
+
+
+@app.post("/api/pending/{job_id}/answer")
+async def api_answer_question(job_id: int, request: Request):
+    """Save one or more user-provided answers for a job's pending questions."""
+    job = get_job(job_id, DB_PATH)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    body = await request.json()
+    answers = body.get("answers", [])  # [{id: int, answer: str}, ...]
+    for a in answers:
+        answer_question(int(a["id"]), str(a["answer"]), DB_PATH)
+    remaining = count_unanswered(job_id, DB_PATH)
+    return JSONResponse({"saved": len(answers), "remaining": remaining})
+
+
+@app.post("/api/pending/{job_id}/submit")
+async def api_submit_pending(job_id: int, request: Request):
+    """
+    Save final answers then POST the Greenhouse application.
+    Body: {answers: [{id, answer}, ...]}
+    """
+    job = get_job(job_id, DB_PATH)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    body = await request.json()
+    answers = body.get("answers", [])
+    for a in answers:
+        answer_question(int(a["id"]), str(a["answer"]), DB_PATH)
+
+    remaining = count_unanswered(job_id, DB_PATH)
+    if remaining > 0:
+        pending = get_pending_questions(job_id, DB_PATH)
+        unanswered = [q for q in pending if q["answer"] is None]
+        return JSONResponse({
+            "status": "still_pending",
+            "remaining": remaining,
+            "questions": unanswered,
+        })
+
+    result = submit_pending_answers(job)
+    if result["status"] == "applied":
+        mark_applied(job_id, result["application_id"], DB_PATH)
+        threading.Thread(
+            target=send_approval_alert,
+            args=(job, True, result["application_id"], []),
+            daemon=True,
+        ).start()
+        return JSONResponse({"status": "applied", "application_id": result["application_id"]})
+
+    return JSONResponse({"status": result["status"], "note": "Submission failed — try applying manually"})
 
 
 @app.post("/api/reject/{job_id}")

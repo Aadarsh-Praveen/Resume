@@ -188,6 +188,33 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def send_pending_questions_alert(
+    job_dict: dict,
+    pending_count: int,
+    bot_token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+) -> bool:
+    """
+    Notify the user that a job has unanswered questions blocking auto-apply.
+    They need to open the Applyflow dashboard to fill them in.
+    """
+    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id   = chat_id   or os.getenv("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        return False
+
+    company = job_dict.get("company", "Unknown")
+    title   = job_dict.get("title", "Role")
+    s       = "s" if pending_count != 1 else ""
+
+    message = (
+        f"❓ <b>{title} @ {company}</b>\n\n"
+        f"<b>{pending_count} question{s}</b> need your answer before the agent can apply.\n"
+        f"Open the <b>Needs Input</b> tab in the Applyflow dashboard to fill them in."
+    )
+    return _send_message(bot_token, chat_id, message)
+
+
 def send_approval_alert(
     job_dict: dict,
     success: bool,

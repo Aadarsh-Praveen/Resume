@@ -167,6 +167,44 @@
       return { rows: recruiters.map(mapRecruiter), stats };
     },
 
+    async pendingJobs() {
+      const jobs = await apiFetch('/api/pending');
+      return jobs.map(j => ({
+        dbId:      j.id,
+        company:   j.company || '—',
+        position:  j.title   || '—',
+        portal:    capitalize(j.source) || 'Unknown',
+        jdUrl:     j.url || '#',
+        questions: (j.questions || []).map(q => ({
+          id:        q.id,
+          label:     q.label,
+          fieldType: q.field_type,
+          options:   q.options || [],
+          required:  !!q.required,
+        })),
+      }));
+    },
+
+    async saveAnswers(jobId, answers) {
+      const res = await fetch(API + `/api/pending/${jobId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers }),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      return res.json();
+    },
+
+    async submitPending(jobId, answers) {
+      const res = await fetch(API + `/api/pending/${jobId}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers }),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      return res.json();
+    },
+
     async weekly() {
       const data = await apiFetch('/api/analytics/weekly');
       return {
