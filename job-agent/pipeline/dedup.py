@@ -201,10 +201,6 @@ def _conn():
         # All cloud PostgreSQL providers require SSL (Supabase, Neon, Railway, etc.)
         if p.hostname and p.hostname not in ("localhost", "127.0.0.1"):
             kwargs["ssl_context"] = ssl.create_default_context()
-        # Transaction poolers (Supabase port 6543, PgBouncer) don't support
-        # prepared statements — disable pg8000's statement cache.
-        if (p.port or 5432) == 6543 or "pooler" in (p.hostname or ""):
-            kwargs["statement_cache_size"] = 0
         c = pg8000.dbapi.connect(**kwargs)
     else:
         if DB_PATH != ":memory:":
