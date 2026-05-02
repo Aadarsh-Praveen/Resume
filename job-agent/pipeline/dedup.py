@@ -198,8 +198,8 @@ def _conn():
             "user":     p.username,
             "password": p.password,
         }
-        # Neon and most cloud PG require SSL
-        if "sslmode=require" in DATABASE_URL or (p.hostname and "neon" in p.hostname):
+        # All cloud PostgreSQL providers require SSL (Supabase, Neon, Railway, etc.)
+        if p.hostname and p.hostname not in ("localhost", "127.0.0.1"):
             kwargs["ssl_context"] = ssl.create_default_context()
         c = pg8000.dbapi.connect(**kwargs)
     else:
