@@ -523,6 +523,11 @@ def tailor_resume(
     # ── Step 5: Generate cover letter ────────────────────────────────────────
     cover_letter = _generate_cover_letter(job_dict, jd_text, client)
 
+    # ── Step 6: Upload PDF to GCS (if configured) ─────────────────────────────
+    from pipeline.gcs import upload_pdf
+    pdf_filename = os.path.basename(pdf_path)
+    pdf_path = upload_pdf(pdf_path, pdf_filename)
+
     logger.info(
         "Tailoring complete for job #%d — PDF: %s | ATS: %.1f%%",
         job_id, pdf_path, ats_score,

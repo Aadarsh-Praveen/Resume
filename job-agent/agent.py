@@ -275,16 +275,7 @@ def process_job(job: dict) -> bool:
     else:
         status = "ready"
 
-    # Read PDF bytes for cloud storage (stored as BYTEA in PostgreSQL)
-    pdf_bytes = None
-    if pdf_path:
-        try:
-            with open(pdf_path, "rb") as _f:
-                pdf_bytes = _f.read()
-        except OSError as e:
-            logger.warning("Could not read PDF bytes: %s", e)
-
-    mark_processed(job_id, pdf_path, ats_score, status, DB_PATH, pdf_bytes=pdf_bytes)
+    mark_processed(job_id, pdf_path, ats_score, status, DB_PATH)
 
     # ── Find recruiter ────────────────────────────────────────────────────────
     recruiter_info = None
