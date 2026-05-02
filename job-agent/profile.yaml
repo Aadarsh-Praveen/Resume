@@ -18,47 +18,38 @@ work_authorization:
   authorized_us: "Yes"
 
   # Your current visa/status: Citizen / Green Card / H1B / H4-EAD / OPT / CPT / TN / L1 / Other
-  visa_status: "H1B"
+  visa_status: "F1"
 
   # Will you need the employer to sponsor a visa now or in the future?
-  needs_sponsorship: "Yes"
+  needs_sponsorship: "No"
 
   # Free-text detail shown on forms that ask for explanation
-  sponsorship_details: "Currently on H1B; open to employer transfer"
+  sponsorship_details: ""
 
   # Used on forms asking "citizenship status" or "nationality"
-  citizenship: "Indian national, H1B visa holder in the United States"
+  citizenship: "Indian national, F1 visa holder in the United States"
 
 # ── Availability ──────────────────────────────────────────────────────────────
 availability:
   # How soon can you start? Used on "earliest start date" fields.
-  earliest_start_date: "2 weeks after offer acceptance"
+  earliest_start_date: "Immediate"
 
   # Notice period at current employer
-  notice_period: "2 weeks"
+  notice_period: "0 Days"
 
   # Willing to relocate? Yes / No / Open to discussion
-  willing_to_relocate: "No"
+  willing_to_relocate: "Yes"
 
   # Preferred work arrangement: Remote / Hybrid / Onsite / No preference
-  preferred_work_mode: "Hybrid"
+  preferred_work_mode: "No Preference"
 
-# ── Compensation ──────────────────────────────────────────────────────────────
-compensation:
-  # Base salary expectation (USD). Used on "salary expectation" fields.
-  expected_salary_usd: "180000–220000"
-
-  # Total comp (base + equity + bonus). Used on "total compensation" fields.
-  expected_total_comp: "200000–250000 (base + equity)"
-
-  open_to_negotiate: "Yes"
 
 # ── Background ────────────────────────────────────────────────────────────────
 background:
   # Highest degree: High School / Associate / Bachelors / Masters / PhD
   highest_degree: "Masters"
-  field_of_study: "Computer Science"
-  graduation_year: "2022"
+  field_of_study: "Data Analytics Engineering"
+  graduation_year: "2025"
 
   # Total years of professional experience (used on dropdown questions)
   years_total_experience: "3"
@@ -73,7 +64,7 @@ background:
 # to answer" for anything you don't want to disclose. The agent will never
 # guess these — it reads exactly what you write here.
 eeo:
-  gender: "Prefer not to answer"
+  gender: "Male"
   race_ethnicity: "Asian"
   veteran_status: "I am not a veteran"
   disability: "No, I don't have a disability"
