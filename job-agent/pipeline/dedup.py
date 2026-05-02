@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     processed   INTEGER NOT NULL DEFAULT 0,
     ats_score   REAL,
     pdf_path    TEXT,
-    pdf_bytes   BYTEA,
     status      TEXT    DEFAULT 'pending',
     created_at  TEXT    NOT NULL
 );
@@ -170,7 +169,6 @@ _MIGRATIONS_PG = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_approval_status ON jobs (approval_status)",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS fit_reason TEXT",
-    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manual_review INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_status TEXT",
     """CREATE TABLE IF NOT EXISTS location_cache (
@@ -240,28 +238,25 @@ def _insert(c, sql: str, params) -> int:
 
 
 def _all(cur) -> list[dict]:
-    """Fetch all rows as plain dicts, stripping binary columns."""
+    """Fetch all rows as plain dicts."""
     rows = cur.fetchall()
     if not rows:
         return []
     if _USE_PG:
         cols = [d[0] for d in cur.description]
-        return [
-            {cols[i]: row[i] for i in range(len(cols)) if cols[i] != "pdf_bytes"}
-            for row in rows
-        ]
-    return [{k: v for k, v in dict(r).items() if k != "pdf_bytes"} for r in rows]
+        return [{cols[i]: row[i] for i in range(len(cols))} for row in rows]
+    return [dict(r) for r in rows]
 
 
 def _one(cur) -> Optional[dict]:
-    """Fetch one row as a plain dict, stripping binary columns."""
+    """Fetch one row as a plain dict."""
     row = cur.fetchone()
     if row is None:
         return None
     if _USE_PG:
         cols = [d[0] for d in cur.description]
-        return {cols[i]: row[i] for i in range(len(cols)) if cols[i] != "pdf_bytes"}
-    return {k: v for k, v in dict(row).items() if k != "pdf_bytes"}
+        return {cols[i]: row[i] for i in range(len(cols))}
+    return dict(row)
 
 
 def _run_script(c, script: str):
@@ -381,18 +376,12 @@ def mark_processed(
     ats_score: Optional[float],
     status: str,
     db_path: str = DB_PATH,
-    pdf_bytes: Optional[bytes] = None,
 ) -> None:
     """Update a job row as processed with outcome data."""
     with _conn() as c:
-        if _USE_PG and pdf_bytes is not None:
-            _x(c,
-               "UPDATE jobs SET processed=1, pdf_path=?, pdf_bytes=?, ats_score=?, status=? WHERE id=?",
-               (pdf_path, pdf_bytes, ats_score, status, job_id))
-        else:
-            _x(c,
-               "UPDATE jobs SET processed=1, pdf_path=?, ats_score=?, status=? WHERE id=?",
-               (pdf_path, ats_score, status, job_id))
+        _x(c,
+           "UPDATE jobs SET processed=1, pdf_path=?, ats_score=?, status=? WHERE id=?",
+           (pdf_path, ats_score, status, job_id))
 
 
 def set_cover_letter(job_id: int, cover_letter: str, db_path: str = DB_PATH) -> None:
@@ -433,15 +422,6 @@ def set_application_status(job_id: int, status: str, db_path: str = DB_PATH) -> 
     with _conn() as c:
         _x(c, "UPDATE jobs SET application_status = ? WHERE id = ?", (status or None, job_id))
 
-
-def get_job_pdf_bytes(job_id: int) -> Optional[bytes]:
-    """Fetch the raw PDF bytes for a job (PostgreSQL only; returns None for SQLite)."""
-    if not _USE_PG:
-        return None
-    with _conn() as c:
-        cur = _x(c, "SELECT pdf_bytes FROM jobs WHERE id = ?", (job_id,))
-        row = cur.fetchone()
-        return row[0] if row else None
 
 
 def get_pending_review_jobs(db_path: str = DB_PATH) -> list[dict]:
