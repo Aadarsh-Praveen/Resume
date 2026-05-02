@@ -61,19 +61,22 @@ _FRONTEND = _HERE.parent.parent / "frontend"         # resume/frontend/
 # ── App setup ─────────────────────────────────────────────────────────────────
 
 _DB_AVAILABLE = True
+_DB_ERROR: str = ""
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _DB_AVAILABLE
+    global _DB_AVAILABLE, _DB_ERROR
     try:
         init_db(DB_PATH)
         _DB_AVAILABLE = True
+        _DB_ERROR = ""
     except Exception as e:
         _DB_AVAILABLE = False
+        _DB_ERROR = str(e)
         logger.critical(
-            "Database unavailable at startup (%s). "
-            "Dashboard will return 503 until the DB recovers. Error: %s",
+            "Database unavailable at startup (%s). Error: %s",
             "PostgreSQL" if _USE_PG else DB_PATH, e,
+            exc_info=True,
         )
     yield
 
@@ -99,6 +102,20 @@ async def db_health_gate(request, call_next):
 
 
 # ── JSON API ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+async def api_health():
+    import os
+    db_url = os.getenv("DATABASE_URL", "")
+    masked = (db_url[:40] + "...") if len(db_url) > 40 else db_url
+    return JSONResponse({
+        "db_available": _DB_AVAILABLE,
+        "db_error": _DB_ERROR,
+        "db_type": "PostgreSQL" if _USE_PG else "SQLite",
+        "database_url_set": bool(db_url),
+        "database_url_preview": masked,
+    })
+
 
 @app.get("/api/profile")
 async def api_profile():
