@@ -17,11 +17,14 @@ import os
 import re
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
+
+def _gemini_model():
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    return genai.GenerativeModel("gemini-2.0-flash", system_instruction=_SYSTEM)
 
 _SYSTEM = """\
 You are a job-fit screener. Given a job description and a candidate profile,
@@ -64,7 +67,7 @@ def _parse_response(text: str) -> dict:
     return json.loads(text)
 
 
-def assess_fit(jd_text: str, client: Optional[anthropic.Anthropic] = None, years_experience: int = None) -> dict:
+def assess_fit(jd_text: str, client=None, years_experience: int = None) -> dict:
     """
     Assess whether the candidate fits the job based on the JD text.
 
@@ -92,10 +95,7 @@ def assess_fit(jd_text: str, client: Optional[anthropic.Anthropic] = None, years
         except ImportError:
             years_experience = 3
 
-    if client is None:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-    # Fast pre-check: regex for obvious year overrequirements before calling Haiku
+    # Fast pre-check: regex for obvious year overrequirements before calling Gemini
     yr_matches = re.findall(r'(\d+)\+?\s*years?\s+(?:of\s+)?(?:relevant\s+)?(?:engineering\s+|work\s+)?experience', jd_text[:3000], re.IGNORECASE)
     if yr_matches:
         max_required = max(int(y) for y in yr_matches)
@@ -105,13 +105,9 @@ def assess_fit(jd_text: str, client: Optional[anthropic.Anthropic] = None, years
             return {"skip": True, "reason": reason, "min_years": max_required}
 
     try:
-        msg = client.messages.create(
-            model=_MODEL,
-            max_tokens=256,
-            system=_SYSTEM,
-            messages=[{"role": "user", "content": _build_prompt(jd_text, years_experience)}],
-        )
-        raw = msg.content[0].text
+        model = _gemini_model()
+        response = model.generate_content(_build_prompt(jd_text, years_experience))
+        raw = response.text
         parsed = _parse_response(raw)
 
         verdict  = parsed.get("verdict", "apply")

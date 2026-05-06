@@ -18,9 +18,15 @@ import logging
 import subprocess
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
+
+
+def _gemini_model():
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    return genai.GenerativeModel("gemini-2.0-flash")
+
 
 PDFTEXTRACT_BIN = os.getenv("PDFTOTEXT_BIN", "pdftotext")
 
@@ -39,28 +45,17 @@ Job Description:
 """
 
 
-def extract_keywords(jd_text: str, client: Optional[anthropic.Anthropic] = None) -> dict:
+def extract_keywords(jd_text: str, client=None) -> dict:
     """
-    Use Claude Haiku to extract required and preferred keywords from a JD.
+    Use Gemini Flash to extract required and preferred keywords from a JD.
 
     Returns:
         {"required": [...], "preferred": [...]}
     """
-    if client is None:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
     try:
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=512,
-            messages=[
-                {
-                    "role": "user",
-                    "content": _KEYWORD_EXTRACTION_PROMPT + jd_text[:4000],
-                }
-            ],
-        )
-        raw = message.content[0].text.strip()
+        model = _gemini_model()
+        response = model.generate_content(_KEYWORD_EXTRACTION_PROMPT + jd_text[:4000])
+        raw = response.text.strip()
 
         # Strip markdown code blocks if Claude wrapped it
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -134,7 +129,7 @@ def _keyword_matches(resume_text: str, keyword: str) -> bool:
 def score_resume(
     pdf_path: str,
     jd_text: str,
-    client: Optional[anthropic.Anthropic] = None,
+    client=None,
     keywords: Optional[dict] = None,
 ) -> float:
     """
@@ -183,7 +178,7 @@ def score_resume(
 def get_missing_keywords(
     pdf_path: str,
     jd_text: str,
-    client: Optional[anthropic.Anthropic] = None,
+    client=None,
     keywords: Optional[dict] = None,
 ) -> list[str]:
     """

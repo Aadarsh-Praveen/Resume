@@ -1,0 +1,83 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/workflows/agent.yml'
+      - 'scripts/**'
+      - 'README.md'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build env vars file for Cloud Run
+        env:
+          GCS_BUCKET:                          ${{ secrets.GCS_BUCKET }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          APPLICANT_NAME:                      ${{ secrets.APPLICANT_NAME }}
+          APPLICANT_FIRST_NAME:                ${{ secrets.APPLICANT_FIRST_NAME }}
+          APPLICANT_LAST_NAME:                 ${{ secrets.APPLICANT_LAST_NAME }}
+          APPLICANT_EMAIL:                     ${{ secrets.APPLICANT_EMAIL }}
+          APPLICANT_PHONE:                     ${{ secrets.APPLICANT_PHONE }}
+          APPLICANT_ROLE:                      ${{ secrets.APPLICANT_ROLE }}
+          APPLICANT_LOCATION:                  ${{ secrets.APPLICANT_LOCATION }}
+          APPLICANT_LINKEDIN:                  ${{ secrets.APPLICANT_LINKEDIN }}
+          APPLICANT_LINKEDIN_URL:              ${{ secrets.APPLICANT_LINKEDIN_URL }}
+          APPLICANT_GITHUB:                    ${{ secrets.APPLICANT_GITHUB }}
+          GITHUB_DASHBOARD_TOKEN:              ${{ secrets.GITHUB_DASHBOARD_TOKEN }}
+          DASHBOARD_PASSWORD:                  ${{ secrets.DASHBOARD_PASSWORD }}
+          ANTHROPIC_API_KEY:                   ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY:                      ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:                  ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:                    ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN:                        ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:                  ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json
+
+          creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON", "")
+
+          simple_vars = [
+              "GCS_BUCKET", "APPLICANT_NAME", "APPLICANT_FIRST_NAME", "APPLICANT_LAST_NAME",
+              "APPLICANT_EMAIL", "APPLICANT_PHONE", "APPLICANT_ROLE", "APPLICANT_LOCATION",
+              "APPLICANT_LINKEDIN", "APPLICANT_LINKEDIN_URL", "APPLICANT_GITHUB",
+              "GITHUB_DASHBOARD_TOKEN", "DASHBOARD_PASSWORD", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+              "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NOTION_TOKEN", "NOTION_DATABASE_ID",
+          ]
+
+          with open("/tmp/cloudrun_env.yaml", "w") as f:
+              for var in simple_vars:
+                  val = os.environ.get(var, "")
+                  if val:
+                      f.write(f"{var}: {json.dumps(val)}\n")
+              # JSON credentials written as YAML literal block scalar
+              if creds_json:
+                  f.write("GOOGLE_APPLICATION_CREDENTIALS_JSON: |\n")
+                  for line in creds_json.strip().split("\n"):
+                      f.write(f"  {line}\n")
+
+          print("Env vars file written successfully")
+          PYEOF
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy applyflow-api \
+            --source . \
+            --region us-central1 \
+            --allow-unauthenticated \
+            --port 8080 \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --env-vars-file /tmp/cloudrun_env.yaml

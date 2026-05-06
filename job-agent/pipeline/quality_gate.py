@@ -15,8 +15,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-import anthropic
-
 from config import ATS_SCORE_MIN, ATS_SCORE_MAX
 from pipeline.latex_compiler import compile_tex, get_page_count, render_preview, sanitise_latex
 from pipeline.ats_scorer import score_resume
@@ -53,7 +51,7 @@ def run_quality_gates(
     jd_text: str,
     output_dir: str,
     filename: str,
-    client: Optional[anthropic.Anthropic] = None,
+    client=None,
 ) -> GateResult:
     """
     Run all quality gates on a LaTeX string.
@@ -103,10 +101,7 @@ def run_quality_gates(
         logger.info("Gate 2 PASS — 1 page")
 
     # ── Gate 3: ATS score ─────────────────────────────────────────────────────
-    if client is None:
-        client = anthropic.Anthropic()
-
-    ats_score = score_resume(pdf_path, jd_text, client)
+    ats_score = score_resume(pdf_path, jd_text)
     result.ats_score = ats_score
 
     if ats_score < ATS_SCORE_MIN:
