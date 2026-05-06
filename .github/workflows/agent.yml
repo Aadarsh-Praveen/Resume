@@ -26,6 +26,7 @@ jobs:
         run: python3 -m pip install -r requirements.txt
 
       - name: Install Playwright browser (for CSRF Workday tenants)
+        if: ${{ github.event.inputs.mode != 'process' }}
         run: python3 -m playwright install chromium --with-deps
 
       - name: Run agent
@@ -47,7 +48,20 @@ jobs:
           GMAIL_CREDENTIALS_JSON: ${{ secrets.GMAIL_CREDENTIALS_JSON }}
           SHEETS_CREDENTIALS_JSON: ${{ secrets.SHEETS_CREDENTIALS_JSON }}
           SHEETS_SPREADSHEET_ID:  ${{ secrets.SHEETS_SPREADSHEET_ID }}
-          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+          GCS_BUCKET:                          ${{ secrets.GCS_BUCKET }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          APPLICANT_NAME:                      ${{ secrets.APPLICANT_NAME }}
+          APPLICANT_FIRST_NAME:                ${{ secrets.APPLICANT_FIRST_NAME }}
+          APPLICANT_LAST_NAME:                 ${{ secrets.APPLICANT_LAST_NAME }}
+          APPLICANT_EMAIL:                     ${{ secrets.APPLICANT_EMAIL }}
+          APPLICANT_PHONE:                     ${{ secrets.APPLICANT_PHONE }}
+          APPLICANT_ROLE:                      ${{ secrets.APPLICANT_ROLE }}
+          APPLICANT_LOCATION:                  ${{ secrets.APPLICANT_LOCATION }}
+          APPLICANT_LINKEDIN:                  ${{ secrets.APPLICANT_LINKEDIN }}
+          APPLICANT_LINKEDIN_URL:              ${{ secrets.APPLICANT_LINKEDIN_URL }}
+          APPLICANT_GITHUB:                    ${{ secrets.APPLICANT_GITHUB }}
+          NOTION_TOKEN:                        ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:                  ${{ secrets.NOTION_DATABASE_ID }}
           RESUMES_DIR:            resumes
 
       - name: Upload logs on failure
