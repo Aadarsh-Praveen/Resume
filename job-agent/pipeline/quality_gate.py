@@ -75,7 +75,7 @@ def run_quality_gates(
         preview_path="",
     )
 
-    # ── Gate 1: LaTeX compile ─────────────────────────────────────────────────
+    # ── Gate 1: LaTeX compile ─────────────────────────────────────────────────────────
     tex_sanitised = sanitise_latex(tex_content)
     success, pdf_path, error_log = compile_tex(tex_sanitised, output_dir, filename)
 
@@ -88,7 +88,7 @@ def run_quality_gates(
     result.pdf_path = pdf_path
     logger.info("Gate 1 PASS — compiled %s", pdf_path)
 
-    # ── Gate 2: Page count ───────────────────────────────────────────────────
+    # ── Gate 2: Page count ─────────────────────────────────────────────────────────────
     pages = get_page_count(pdf_path)
     result.page_count = pages
 
@@ -100,7 +100,7 @@ def run_quality_gates(
     else:
         logger.info("Gate 2 PASS — 1 page")
 
-    # ── Gate 3: ATS score ─────────────────────────────────────────────────────
+    # ── Gate 3: ATS score ─────────────────────────────────────────────────────────────────
     ats_score = score_resume(pdf_path, jd_text)
     result.ats_score = ats_score
 
@@ -119,7 +119,7 @@ def run_quality_gates(
     else:
         logger.info("Gate 3 PASS — ATS %.1f%%", ats_score)
 
-    # ── Gate 4: Preview render ────────────────────────────────────────────────
+    # ── Gate 4: Preview render ────────────────────────────────────────────────────────────────
     preview_path = render_preview(pdf_path)
     result.preview_path = preview_path
     if not preview_path:
@@ -128,7 +128,7 @@ def run_quality_gates(
     else:
         logger.info("Gate 4 PASS — preview at %s", preview_path)
 
-    # ── Final verdict ────────────────────────────────────────────────────────
+    # ── Final verdict ──────────────────────────────────────────────────────────────────────
     has_fatal_issues = any(
         "compile error" in i.lower() or "page count" in i.lower() or "below minimum" in i.lower()
         for i in result.issues
