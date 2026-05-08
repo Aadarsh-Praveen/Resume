@@ -2,14 +2,13 @@
 Core resume tailoring pipeline.
 
 Takes a job dict + JD text, sends the base resume .tex and JD to Claude,
-runs quality gates (compile → page count → ATS score), and saves the PDF.
+runs quality gates (compile -> page count -> ATS score), and saves the PDF.
 
 Usage:
     from pipeline.tailor_resume import tailor_resume
     pdf_path = tailor_resume(job_id=42, job_dict=job, jd_text=jd)
 """
 
-import base64
 import os
 import re
 import logging
@@ -33,6 +32,8 @@ from pipeline.latex_compiler import (
 from pipeline.ats_scorer import score_resume, get_missing_keywords, extract_keywords
 
 logger = logging.getLogger(__name__)
+
+_HAIKU_MODEL = "claude-haiku-4-5"  # mechanical retry calls (fix/trim/expand/ATS)
 
 BASE_RESUME_PATH = os.getenv("BASE_RESUME_PATH", "base_resume.tex")
 RESUMES_DIR = os.getenv("RESUMES_DIR", "resumes")
@@ -65,7 +66,7 @@ def _extract_tex(response_text: str) -> str:
     if fence_match:
         return fence_match.group(1).strip()
 
-    # No fences — find the start of actual LaTeX content (\documentclass or \begin{document})
+    # No fences -- find the start of actual LaTeX content (\documentclass or \begin{document})
     doc_match = re.search(r"(\\documentclass[\s\S]+)", text)
     if doc_match:
         return doc_match.group(1).strip()
@@ -90,16 +91,16 @@ def _build_tailoring_prompt(jd_text: str, include_certs: bool = False) -> str:
     The base resume is now in the system (cached), so only the JD goes here.
     """
     cert_instruction = (
-        "The JD explicitly mentions certifications — include the Certifications section at the end."
+        "The JD explicitly mentions certifications -- include the Certifications section at the end."
         if include_certs else
-        "DO NOT include a Certifications section — the JD does not require it."
+        "DO NOT include a Certifications section -- the JD does not require it."
     )
     return (
         f"Tailor the master resume (in the system) for the following job description.\n\n"
         f"=== JOB DESCRIPTION ===\n{jd_text[:5000]}\n\n"
         f"CERTIFICATIONS RULE: {cert_instruction}\n"
-        f"PUBLICATIONS RULE: DO NOT include a Publications section — omit it entirely.\n\n"
-        f"Return ONLY the complete tailored .tex file — no explanations."
+        f"PUBLICATIONS RULE: DO NOT include a Publications section -- omit it entirely.\n\n"
+        f"Return ONLY the complete tailored .tex file -- no explanations."
     )
 
 
@@ -116,30 +117,30 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
     needed = 100 - fill_pct
     if needed >= 25:
         guidance = (
-            "Add 1 bullet to each work experience role (most recent → 4 bullets, others → 3 each) "
+            "Add 1 bullet to each work experience role (most recent -> 4 bullets, others -> 3 each) "
             "and expand the summary to 4 full lines."
         )
     elif needed >= 12:
         guidance = (
-            "Add 1 bullet to the most recent role only (→ 4 bullets total) "
-            "and lengthen 3–4 existing bullets by 4–6 words each."
+            "Add 1 bullet to the most recent role only (-> 4 bullets total) "
+            "and lengthen 3-4 existing bullets by 4-6 words each."
         )
     else:
         guidance = (
-            "Lengthen existing bullets by 3–5 words each — extend the result metric or method. "
+            "Lengthen existing bullets by 3-5 words each -- extend the result metric or method. "
             "Do NOT add new bullets."
         )
     return (
         f"This resume is only ~{fill_pct}% full and must fill the ENTIRE page.\n\n"
         f"{guidance}\n\n"
         f"Rules:\n"
-        f"• Every bullet: 20–28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
-        f"• No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words.\n"
-        f"• Do NOT add a Certifications or Publications section.\n"
-        f"• Do NOT add blank lines or \\\\vspace — real content only.\n"
-        f"• Summary: 3–4 lines max — never exceed 4 lines.\n"
-        f"• Skills: 4 categories × 6–7 tools each.\n\n"
-        f"IMPORTANT: do not overshoot — the goal is ~95%% fill, not 2 pages.\n"
+        f"- Every bullet: 20-28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
+        f"- No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 8 words.\n"
+        f"- Do NOT add a Certifications or Publications section.\n"
+        f"- Do NOT add blank lines or \\vspace -- real content only.\n"
+        f"- Summary: 3-4 lines max -- never exceed 4 lines.\n"
+        f"- Skills: 4 categories x 6-7 tools each.\n\n"
+        f"IMPORTANT: do not overshoot -- the goal is ~95% fill, not 2 pages.\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{sparse_tex}"
     )
@@ -148,19 +149,19 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
 def _build_trim_prompt(long_tex: str, page_count: int) -> str:
     return (
         f"This resume compiled to {page_count} pages. It MUST fit on exactly 1 page.\n\n"
-        f"Remove the MINIMUM content needed — stop as soon as 1 page is achievable.\n"
+        f"Remove the MINIMUM content needed -- stop as soon as 1 page is achievable.\n"
         f"Apply in this exact order:\n"
         f"1. DELETE Certifications section entirely (always safe to remove).\n"
         f"2. DELETE Publications section entirely.\n"
-        f"3. Shorten any bullet exceeding 22 words — trim trailing clauses, keep the impact.\n"
+        f"3. Shorten any bullet exceeding 22 words -- trim trailing clauses, keep the impact.\n"
         f"4. Most recent role: max 4 bullets. Second role: max 3. Oldest role: max 3.\n"
-        f"5. Projects: keep top 2 most JD-relevant only, max 3 bullets each, ≤20 words each.\n"
-        f"6. Summary: 3 sentences, 3–4 lines max.\n"
+        f"5. Projects: keep top 2 most JD-relevant only, max 3 bullets each, ~20 words each.\n"
+        f"6. Summary: 3 sentences, 3-4 lines max.\n"
         f"7. Skills: max 4 categories, 6 tools each.\n"
-        f"8. Company line format: CompanyName \\\\hfill City, ST — no pipes, no product names.\n\n"
-        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have ≥8 words.\n"
+        f"8. Company line format: CompanyName \\hfill City, ST -- no pipes, no product names.\n\n"
+        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 8 words.\n"
         f"Do NOT remove any job roles, companies, or dates.\n"
-        f"Return ONLY the complete corrected .tex file — no explanations.\n\n"
+        f"Return ONLY the complete corrected .tex file -- no explanations.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
     )
 
@@ -168,7 +169,7 @@ def _build_trim_prompt(long_tex: str, page_count: int) -> str:
 def _build_ats_retry_prompt(current_tex: str, missing_keywords: list[str], score: float) -> str:
     kw_list = "\n".join(f"  - {kw}" for kw in missing_keywords[:30])
     return (
-        f"ATS keyword score is {score:.1f}% — below the 89% minimum.\n\n"
+        f"ATS keyword score is {score:.1f}% -- below the 89% minimum.\n\n"
         f"Missing keywords that must appear naturally in the resume:\n{kw_list}\n\n"
         f"Inject these into the most relevant bullet points where they truthfully fit.\n"
         f"Do NOT fabricate experience. Only use these where already implied.\n\n"
@@ -182,57 +183,52 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
     Verify the resume is exactly 1 full page.
 
     Fast-path order (cheapest first):
-      1. Page count > 1 → OVERFLOW (no vision call)
-      2. Page count == 1 and fill 82–96% → FULL (no vision call)
-      3. Otherwise → Haiku vision call
+      1. Page count > 1 -> OVERFLOW (no vision call)
+      2. Page count == 1 and fill 82-96% -> FULL (no vision call)
+      3. Otherwise -> Haiku vision call
     """
     pages = get_page_count(pdf_path)
     if pages > 1:
-        logger.warning("_claude_verify_page: %d pages detected — OVERFLOW", pages)
+        logger.warning("_claude_verify_page: %d pages detected -- OVERFLOW", pages)
         return False, "OVERFLOW"
 
     jpeg_path = render_preview(pdf_path)
     if not jpeg_path or not os.path.exists(jpeg_path):
-        logger.warning("_claude_verify_page: no preview available — assuming OK")
+        logger.warning("_claude_verify_page: no preview available -- assuming OK")
         return True, "no preview"
 
     try:
-        with open(jpeg_path, "rb") as f:
-            image_data = base64.standard_b64encode(f.read()).decode()
-
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=80,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": image_data,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "This is a rendered resume page. Answer with one word only:\n"
-                            "- FULL: content reaches within ~2% of the bottom margin, no overflow\n"
-                            "- SHORT: any visible whitespace gap at the bottom (more than 5% of page height empty)\n"
-                            "- OVERFLOW: content is cut off or text runs off the page\n"
-                            "Reply with exactly one word: FULL, SHORT, or OVERFLOW"
-                        ),
-                    },
-                ],
-            }],
+        import time
+        import google.generativeai as genai
+        import PIL.Image
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        vision_model = genai.GenerativeModel("gemini-2.5-flash")
+        img = PIL.Image.open(jpeg_path)
+        prompt = (
+            "This is a rendered resume page. Examine the BOTTOM of the page carefully.\n"
+            "Answer with one word only:\n"
+            "- FULL: the last line of text is within 3% of the bottom margin (almost no gap)\n"
+            "- SHORT: there is visible empty space at the bottom -- any gap larger than 3% of page height\n"
+            "- OVERFLOW: content is cut off or runs off the page\n\n"
+            "Be strict: if you can see ANY noticeable whitespace gap at the bottom, say SHORT.\n"
+            "Reply with exactly one word: FULL, SHORT, or OVERFLOW"
         )
-        verdict = message.content[0].text.strip().upper().split()[0]
-        logger.info("Claude page verify: %s", verdict)
-        return verdict == "FULL", verdict
+        for attempt in range(3):
+            try:
+                response = vision_model.generate_content([img, prompt])
+                verdict = response.text.strip().upper().split()[0]
+                logger.info("Claude page verify: %s", verdict)
+                return verdict == "FULL", verdict
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    wait = 20 * (attempt + 1)
+                    logger.warning("Page verify 429 -- retrying in %ds (attempt %d/3)", wait, attempt + 1)
+                    time.sleep(wait)
+                else:
+                    raise
     except Exception as e:
-        logger.warning("Claude page verify failed: %s — assuming OK", e)
-        return True, "error"
+        logger.warning("Claude page verify failed: %s -- assuming SHORT to be safe", e)
+        return False, "SHORT"
     finally:
         try:
             os.remove(jpeg_path)
@@ -244,17 +240,14 @@ def _call_claude(
     prompt: str,
     client: anthropic.Anthropic,
     system: str = TAILOR_SYSTEM_PROMPT,
-    max_tokens: int = 4096,
+    max_tokens: int = 3000,
     model: str = "claude-sonnet-4-6",
     cached_base_tex: Optional[str] = None,
 ) -> str:
     """Make a Claude API call and return the text response.
 
-    TAILOR_SYSTEM_PROMPT is always sent with cache_control (ephemeral).
-    When ``cached_base_tex`` is provided it is added as a second cached
-    content block in the system — this lets all parallel jobs in the same
-    5-minute window share the same base resume cache entry (~10× cheaper
-    on that block after the first write).
+    TAILOR_SYSTEM_PROMPT and base_resume.tex are cached with type=ephemeral
+    so sequential jobs across the same run share the cache entry.
     """
     if system is TAILOR_SYSTEM_PROMPT:
         system_content = [
@@ -326,7 +319,7 @@ def tailor_resume(
         job_id, role, company, include_certs, _model,
     )
 
-    # ── Step 1: Initial tailoring call ───────────────────────────────────────
+    # Step 1: Initial tailoring call
     # base_tex goes in the system (cached) so all retry calls share the cache entry.
     prompt = _build_tailoring_prompt(jd_text, include_certs)
     tex_content = _extract_tex(
@@ -335,7 +328,7 @@ def tailor_resume(
     tex_content = sanitise_latex(tex_content)
     tex_content = adjust_margin(tex_content, 0.25)  # uniform 0.25in all sides from the start
 
-    # ── Step 2: Compile loop with LaTeX error retries ─────────────────────────
+    # Step 2: Compile loop with LaTeX error retries
     for compile_attempt in range(MAX_RETRIES + 1):
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
 
@@ -348,14 +341,14 @@ def tailor_resume(
                 f"Last error:\n{error_log}"
             )
 
-        logger.warning("Compile attempt %d failed — asking Claude to fix", compile_attempt + 1)
+        logger.warning("Compile attempt %d failed -- asking Claude to fix", compile_attempt + 1)
         fix_prompt = _build_fix_compile_prompt(tex_content, error_log)
-        tex_content = _extract_tex(_call_claude(fix_prompt, client, model=_model))
+        tex_content = _extract_tex(_call_claude(fix_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
         tex_content = sanitise_latex(tex_content)
 
     logger.info("PDF compiled: %s", pdf_path)
 
-    # ── Step 3: Page count gate — content trim then margin shrink ────────────
+    # Step 3: Page count gate -- content trim then margin shrink
     # Pass 1: ask Claude to trim content (up to MAX_PAGE_RETRIES times)
     for page_attempt in range(MAX_PAGE_RETRIES + 1):
         pages = get_page_count(pdf_path)
@@ -363,11 +356,11 @@ def tailor_resume(
             break
 
         if page_attempt >= MAX_PAGE_RETRIES:
-            # Pass 2: content trim exhausted — try shrinking margins (0.25 → 0.22 → 0.20)
+            # Pass 2: content trim exhausted -- try shrinking margins (0.25 -> 0.22 -> 0.20)
             margin = 0.25
             while margin >= 0.20:
                 logger.warning(
-                    "Job #%d: still %d pages — reducing margin to %.2fin",
+                    "Job #%d: still %d pages -- reducing margin to %.2fin",
                     job_id, pages, margin,
                 )
                 tex_content = adjust_margin(tex_content, margin)
@@ -380,14 +373,14 @@ def tailor_resume(
                 margin = round(margin - 0.03, 2)
             else:
                 logger.warning(
-                    "Job #%d: could not fit on 1 page even at min margins — flagging",
+                    "Job #%d: could not fit on 1 page even at min margins -- flagging",
                     job_id,
                 )
             break
 
-        logger.warning("Resume is %d pages — asking Claude to trim", pages)
+        logger.warning("Resume is %d pages -- asking Claude to trim", pages)
         trim_prompt = _build_trim_prompt(tex_content, pages)
-        tex_content = _extract_tex(_call_claude(trim_prompt, client, model=_model))
+        tex_content = _extract_tex(_call_claude(trim_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
         tex_content = sanitise_latex(tex_content)
         tex_content = adjust_margin(tex_content, 0.25)  # re-lock margins after trim
 
@@ -395,21 +388,39 @@ def tailor_resume(
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after trim: {error_log}")
 
-    # ── Step 3b: Claude visual verify — page must be FULL ────────────────────
+    # Step 3b: Fill pre-check -- expand immediately if clearly underfull
+    # get_fill_percentage uses line-count heuristic; treat <88% as SHORT
+    # without waiting for Gemini vision to potentially misclassify it.
+    pre_fill = get_fill_percentage(pdf_path)
+    if pre_fill < 0.88:
+        logger.warning(
+            "Job #%d: fill %.0f%% -- clearly underfull, expanding before vision check",
+            job_id, pre_fill * 100,
+        )
+        expand_prompt = _build_expand_prompt(tex_content, int(pre_fill * 100))
+        expanded_tex = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
+        expanded_tex = sanitise_latex(expanded_tex)
+        ok, expanded_pdf, _ = compile_tex(expanded_tex, RESUMES_DIR, pdf_filename)
+        if ok and get_page_count(expanded_pdf) == 1:
+            tex_content = expanded_tex
+            pdf_path = expanded_pdf
+            logger.info("Pre-fill expand raised fill to acceptable level")
+
+    # Step 3c: Claude visual verify -- page must be FULL
     # Up to 2 passes: expand if SHORT, trim if OVERFLOW
     for visual_attempt in range(2):
         is_good, verdict = _claude_verify_page(pdf_path, client)
         if is_good:
-            logger.info("Claude page verify: FULL — approved")
+            logger.info("Claude page verify: FULL -- approved")
             break
 
         if verdict == "SHORT":
             fill = get_fill_percentage(pdf_path)
             logger.warning(
-                "Job #%d: Claude says SHORT (fill ~%.0f%%) — expanding (attempt %d)",
+                "Job #%d: Claude says SHORT (fill ~%.0f%%) -- expanding (attempt %d)",
                 job_id, fill * 100, visual_attempt + 1,
             )
-            # First try widening margins (0.25 → 0.27 → 0.28) — no content change needed
+            # First try widening margins (0.25 -> 0.27 -> 0.28) -- no content change needed
             margin_fixed = False
             for margin in [0.27, 0.28]:
                 test_tex = adjust_margin(tex_content, margin)
@@ -424,25 +435,25 @@ def tailor_resume(
                         break
             if margin_fixed:
                 break
-            # Margin didn't help — ask Claude to add content
+            # Margin didn't help -- ask Claude to add content
             expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
-            tex_content = _extract_tex(_call_claude(expand_prompt, client, model=_model))
+            tex_content = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
             tex_content = sanitise_latex(tex_content)
             success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
             if not success:
-                logger.warning("Expand recompile failed — keeping pre-expand PDF")
+                logger.warning("Expand recompile failed -- keeping pre-expand PDF")
                 break
             new_pages = get_page_count(new_pdf)
             if new_pages == 1:
                 pdf_path = new_pdf
             elif new_pages > 1:
-                # Expand overshot — trim lightly to recover 1 page
+                # Expand overshot -- trim lightly to recover 1 page
                 logger.warning(
-                    "Job #%d: expand overflowed to %d pages — trimming to recover",
+                    "Job #%d: expand overflowed to %d pages -- trimming to recover",
                     job_id, new_pages,
                 )
                 recover_tex = _extract_tex(
-                    _call_claude(_build_trim_prompt(tex_content, new_pages), client, model=_model)
+                    _call_claude(_build_trim_prompt(tex_content, new_pages), client, model=_HAIKU_MODEL, max_tokens=2000)
                 )
                 recover_tex = sanitise_latex(recover_tex)
                 recover_tex = adjust_margin(recover_tex, 0.25)
@@ -452,19 +463,19 @@ def tailor_resume(
                     pdf_path = recovered_pdf
                     logger.info("Post-expand trim recovered 1-page layout")
                 else:
-                    logger.warning("Post-expand trim also failed — keeping pre-expand PDF")
+                    logger.warning("Post-expand trim also failed -- keeping pre-expand PDF")
             break
 
         elif verdict == "OVERFLOW":
             logger.warning(
-                "Job #%d: visual OVERFLOW on attempt %d — trimming content",
+                "Job #%d: visual OVERFLOW on attempt %d -- trimming content",
                 job_id, visual_attempt + 1,
             )
             # Content trim is more reliable than margin shrink for true overflow
             pages_actual = get_page_count(pdf_path)
             trim_pages = pages_actual if pages_actual > 1 else 2
             trim_tex = _extract_tex(
-                _call_claude(_build_trim_prompt(tex_content, trim_pages), client, model=_model)
+                _call_claude(_build_trim_prompt(tex_content, trim_pages), client, model=_HAIKU_MODEL, max_tokens=2000)
             )
             trim_tex = sanitise_latex(trim_tex)
             trim_tex = adjust_margin(trim_tex, 0.25)
@@ -474,7 +485,7 @@ def tailor_resume(
                 pdf_path = trimmed_pdf
                 logger.info("Visual OVERFLOW content trim recovered 1-page layout")
             elif ok:
-                # Still overflowing — try minimum margins as last resort
+                # Still overflowing -- try minimum margins as last resort
                 tex_content = adjust_margin(trim_tex, 0.20)
                 ok2, new_pdf2, _ = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
                 if ok2:
@@ -482,8 +493,8 @@ def tailor_resume(
         else:
             break
 
-    # ── Step 4: ATS keyword score gate ───────────────────────────────────────
-    # Extract keywords once — reused by both score_resume and get_missing_keywords
+    # Step 4: ATS keyword score gate
+    # Extract keywords once -- reused by both score_resume and get_missing_keywords
     # to avoid a duplicate Haiku call on every retry iteration.
     jd_keywords = extract_keywords(jd_text, client)
     ats_score = 0.0
@@ -491,12 +502,12 @@ def tailor_resume(
         ats_score = score_resume(pdf_path, jd_text, client, keywords=jd_keywords)
 
         if ATS_SCORE_MIN <= ats_score <= ATS_SCORE_MAX:
-            logger.info("ATS score %.1f%% — PASS (target: %d–%d%%)", ats_score, ATS_SCORE_MIN, ATS_SCORE_MAX)
+            logger.info("ATS score %.1f%% -- PASS (target: %d-%d%%)", ats_score, ATS_SCORE_MIN, ATS_SCORE_MAX)
             break
 
         if ats_score > ATS_SCORE_MAX:
             logger.warning(
-                "ATS score %.1f%% exceeds maximum — flagging for review",
+                "ATS score %.1f%% exceeds maximum -- flagging for review",
                 ats_score,
             )
             break
@@ -510,26 +521,26 @@ def tailor_resume(
             break
 
         missing = get_missing_keywords(pdf_path, jd_text, client, keywords=jd_keywords)
-        logger.info("ATS retry %d — missing %d keywords", ats_attempt + 1, len(missing))
+        logger.info("ATS retry %d -- missing %d keywords", ats_attempt + 1, len(missing))
         retry_prompt = _build_ats_retry_prompt(tex_content, missing, ats_score)
-        tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_model))
+        tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
         tex_content = sanitise_latex(tex_content)
 
-        # Recompile after keyword injection — next loop iteration re-scores
+        # Recompile after keyword injection -- next loop iteration re-scores
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry: {error_log}")
 
-    # ── Step 5: Generate cover letter ────────────────────────────────────────
+    # Step 5: Generate cover letter
     cover_letter = _generate_cover_letter(job_dict, jd_text, client)
 
-    # ── Step 6: Upload PDF to GCS (if configured) ─────────────────────────────
+    # Step 6: Upload PDF to GCS (if configured)
     from pipeline.gcs import upload_pdf
     pdf_filename = os.path.basename(pdf_path)
     pdf_path = upload_pdf(pdf_path, pdf_filename)
 
     logger.info(
-        "Tailoring complete for job #%d — PDF: %s | ATS: %.1f%%",
+        "Tailoring complete for job #%d -- PDF: %s | ATS: %.1f%%",
         job_id, pdf_path, ats_score,
     )
     return pdf_path, ats_score, cover_letter
@@ -557,12 +568,11 @@ def _generate_cover_letter(
         f"no buzzwords, professional tone. Sign off with just the name."
     )
     try:
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=400,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text.strip()
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
         logger.warning("Cover letter generation failed: %s", e)
         return ""
