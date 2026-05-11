@@ -26,8 +26,8 @@ from config import (
     OPUS_COMPANIES,
 )
 from pipeline.latex_compiler import (
-    compile_tex, get_page_count, get_fill_percentage,
-    sanitise_latex, adjust_margin, render_preview,
+    compile_tex, get_page_count,
+    sanitise_latex, adjust_margin, adjust_bottom_margin, render_preview, measure_page_gap,
 )
 from pipeline.ats_scorer import score_resume, get_missing_keywords, extract_keywords
 
@@ -182,28 +182,40 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
     """
     Verify the resume is exactly 1 full page.
 
-    Fast-path order (cheapest first):
-      1. Page count > 1 -> OVERFLOW (no vision call)
-      2. Page count == 1 and fill 82-96% -> FULL (no vision call)
-      3. Otherwise -> Haiku vision call
+    Decision order (cheapest first):
+      1. Page count > 1                -> OVERFLOW immediately
+      2. render_preview fails          -> SHORT (conservative, triggers expansion)
+      3. Pixel gap > 15%               -> SHORT immediately (obvious gap, skip Gemini)
+      4. Pixel gap < 4%                -> FULL immediately (within bottom-margin tolerance)
+      5. Pixel gap 4-15% (ambiguous)   -> Gemini vision for nuanced judgment
     """
     pages = get_page_count(pdf_path)
     if pages > 1:
-        logger.warning("_claude_verify_page: %d pages detected -- OVERFLOW", pages)
+        logger.warning("_claude_verify_page: %d pages -- OVERFLOW", pages)
         return False, "OVERFLOW"
 
-    jpeg_path = render_preview(pdf_path)
-    if not jpeg_path or not os.path.exists(jpeg_path):
-        logger.warning("_claude_verify_page: no preview available -- assuming OK")
-        return True, "no preview"
+    img = render_preview(pdf_path)
+    if img is None:
+        logger.warning("_claude_verify_page: render failed -- assuming SHORT to be safe")
+        return False, "SHORT"
 
+    gap = measure_page_gap(img)
+    logger.info("_claude_verify_page: pixel gap %.1f%%", gap * 100)
+
+    if gap > 0.15:
+        logger.info("_claude_verify_page: obvious gap %.1f%% -- SHORT (skip Gemini)", gap * 100)
+        return False, "SHORT"
+
+    if gap < 0.04:
+        logger.info("_claude_verify_page: gap %.1f%% within bottom margin -- FULL (skip Gemini)", gap * 100)
+        return True, "FULL"
+
+    # Gap is 4-15%: ambiguous -- ask Gemini
     try:
         import time
         import google.generativeai as genai
-        import PIL.Image
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         vision_model = genai.GenerativeModel("gemini-2.5-flash")
-        img = PIL.Image.open(jpeg_path)
         prompt = (
             "This is a rendered resume page. Examine the BOTTOM of the page carefully.\n"
             "Answer with one word only:\n"
@@ -217,7 +229,7 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
             try:
                 response = vision_model.generate_content([img, prompt])
                 verdict = response.text.strip().upper().split()[0]
-                logger.info("Claude page verify: %s", verdict)
+                logger.info("Gemini page verify: %s (pixel gap was %.1f%%)", verdict, gap * 100)
                 return verdict == "FULL", verdict
             except Exception as e:
                 if "429" in str(e) and attempt < 2:
@@ -227,13 +239,8 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
                 else:
                     raise
     except Exception as e:
-        logger.warning("Claude page verify failed: %s -- assuming SHORT to be safe", e)
+        logger.warning("Gemini verify failed: %s -- using pixel gap %.1f%% as SHORT", e, gap * 100)
         return False, "SHORT"
-    finally:
-        try:
-            os.remove(jpeg_path)
-        except OSError:
-            pass
 
 
 def _call_claude(
@@ -343,7 +350,7 @@ def tailor_resume(
 
         logger.warning("Compile attempt %d failed -- asking Claude to fix", compile_attempt + 1)
         fix_prompt = _build_fix_compile_prompt(tex_content, error_log)
-        tex_content = _extract_tex(_call_claude(fix_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
+        tex_content = _extract_tex(_call_claude(fix_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
         tex_content = sanitise_latex(tex_content)
 
     logger.info("PDF compiled: %s", pdf_path)
@@ -380,7 +387,7 @@ def tailor_resume(
 
         logger.warning("Resume is %d pages -- asking Claude to trim", pages)
         trim_prompt = _build_trim_prompt(tex_content, pages)
-        tex_content = _extract_tex(_call_claude(trim_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
+        tex_content = _extract_tex(_call_claude(trim_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
         tex_content = sanitise_latex(tex_content)
         tex_content = adjust_margin(tex_content, 0.25)  # re-lock margins after trim
 
@@ -388,72 +395,51 @@ def tailor_resume(
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after trim: {error_log}")
 
-    # Step 3b: Fill pre-check -- expand immediately if clearly underfull
-    # get_fill_percentage uses line-count heuristic; treat <88% as SHORT
-    # without waiting for Gemini vision to potentially misclassify it.
-    pre_fill = get_fill_percentage(pdf_path)
-    if pre_fill < 0.88:
-        logger.warning(
-            "Job #%d: fill %.0f%% -- clearly underfull, expanding before vision check",
-            job_id, pre_fill * 100,
-        )
-        expand_prompt = _build_expand_prompt(tex_content, int(pre_fill * 100))
-        expanded_tex = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
-        expanded_tex = sanitise_latex(expanded_tex)
-        ok, expanded_pdf, _ = compile_tex(expanded_tex, RESUMES_DIR, pdf_filename)
-        if ok and get_page_count(expanded_pdf) == 1:
-            tex_content = expanded_tex
-            pdf_path = expanded_pdf
-            logger.info("Pre-fill expand raised fill to acceptable level")
-
-    # Step 3c: Claude visual verify -- page must be FULL
-    # Up to 2 passes: expand if SHORT, trim if OVERFLOW
-    for visual_attempt in range(2):
+    # Step 3b: Visual verify loop -- up to 3 attempts
+    # SHORT: Claude content expansion only (margins stay at 0.25in max)
+    # OVERFLOW: content trim first, then margin shrink down to 0.20in
+    for visual_attempt in range(3):
         is_good, verdict = _claude_verify_page(pdf_path, client)
         if is_good:
-            logger.info("Claude page verify: FULL -- approved")
+            logger.info("Page verify: FULL -- approved (attempt %d)", visual_attempt + 1)
             break
 
         if verdict == "SHORT":
-            fill = get_fill_percentage(pdf_path)
+            # Measure actual gap to calibrate how aggressive to expand
+            gap_img = render_preview(pdf_path)
+            gap = measure_page_gap(gap_img) if gap_img is not None else 0.15
+            # Each attempt gets more aggressive: lower effective fill_pct forces bigger expansion
+            effective_fill = max(int((1.0 - gap) * 100) - (visual_attempt * 10), 60)
             logger.warning(
-                "Job #%d: Claude says SHORT (fill ~%.0f%%) -- expanding (attempt %d)",
-                job_id, fill * 100, visual_attempt + 1,
+                "Job #%d: SHORT on attempt %d (gap %.1f%%, effective fill %d%%) -- expanding",
+                job_id, visual_attempt + 1, gap * 100, effective_fill,
             )
-            # First try widening margins (0.25 -> 0.27 -> 0.28) -- no content change needed
-            margin_fixed = False
-            for margin in [0.27, 0.28]:
-                test_tex = adjust_margin(tex_content, margin)
-                ok, test_pdf, _ = compile_tex(test_tex, RESUMES_DIR, pdf_filename)
-                if ok and get_page_count(test_pdf) == 1:
-                    test_fill = get_fill_percentage(test_pdf)
-                    if test_fill >= 0.85:
-                        tex_content = test_tex
-                        pdf_path = test_pdf
-                        margin_fixed = True
-                        logger.info("Margin %.2fin filled page to %.0f%%", margin, test_fill * 100)
+            expand_prompt = _build_expand_prompt(tex_content, effective_fill)
+            expanded_tex = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
+            expanded_tex = sanitise_latex(expanded_tex)
+            ok, expanded_pdf, error_log = compile_tex(expanded_tex, RESUMES_DIR, pdf_filename)
+            if not ok:
+                # Expansion produced broken LaTeX (often truncation) -- try to fix it
+                logger.warning("Job #%d: expand compile failed on attempt %d -- trying auto-fix", job_id, visual_attempt + 1)
+                for _fix in range(2):
+                    fixed_tex = _extract_tex(_call_claude(_build_fix_compile_prompt(expanded_tex, error_log), client, model=_HAIKU_MODEL, max_tokens=4000))
+                    fixed_tex = sanitise_latex(fixed_tex)
+                    ok, expanded_pdf, error_log = compile_tex(fixed_tex, RESUMES_DIR, pdf_filename)
+                    if ok:
+                        expanded_tex = fixed_tex
                         break
-            if margin_fixed:
-                break
-            # Margin didn't help -- ask Claude to add content
-            expand_prompt = _build_expand_prompt(tex_content, int(fill * 100))
-            tex_content = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
-            tex_content = sanitise_latex(tex_content)
-            success, new_pdf, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
-            if not success:
-                logger.warning("Expand recompile failed -- keeping pre-expand PDF")
-                break
-            new_pages = get_page_count(new_pdf)
+                if not ok:
+                    logger.warning("Job #%d: expand auto-fix also failed on attempt %d -- keeping current", job_id, visual_attempt + 1)
+                    break
+            new_pages = get_page_count(expanded_pdf)
             if new_pages == 1:
-                pdf_path = new_pdf
+                tex_content = expanded_tex
+                pdf_path = expanded_pdf
             elif new_pages > 1:
-                # Expand overshot -- trim lightly to recover 1 page
-                logger.warning(
-                    "Job #%d: expand overflowed to %d pages -- trimming to recover",
-                    job_id, new_pages,
-                )
+                # Expand overshot -- trim back to 1 page then stop expanding
+                logger.warning("Job #%d: expand overflowed to %d pages -- trimming to recover", job_id, new_pages)
                 recover_tex = _extract_tex(
-                    _call_claude(_build_trim_prompt(tex_content, new_pages), client, model=_HAIKU_MODEL, max_tokens=2000)
+                    _call_claude(_build_trim_prompt(expanded_tex, new_pages), client, model=_HAIKU_MODEL, max_tokens=4000)
                 )
                 recover_tex = sanitise_latex(recover_tex)
                 recover_tex = adjust_margin(recover_tex, 0.25)
@@ -463,19 +449,19 @@ def tailor_resume(
                     pdf_path = recovered_pdf
                     logger.info("Post-expand trim recovered 1-page layout")
                 else:
-                    logger.warning("Post-expand trim also failed -- keeping pre-expand PDF")
-            break
+                    logger.warning("Post-expand trim failed -- keeping pre-expand PDF")
+                break  # stop expanding after an overflow recovery
+            # continue loop to re-verify
 
         elif verdict == "OVERFLOW":
             logger.warning(
-                "Job #%d: visual OVERFLOW on attempt %d -- trimming content",
+                "Job #%d: OVERFLOW on attempt %d -- trimming content",
                 job_id, visual_attempt + 1,
             )
-            # Content trim is more reliable than margin shrink for true overflow
             pages_actual = get_page_count(pdf_path)
             trim_pages = pages_actual if pages_actual > 1 else 2
             trim_tex = _extract_tex(
-                _call_claude(_build_trim_prompt(tex_content, trim_pages), client, model=_HAIKU_MODEL, max_tokens=2000)
+                _call_claude(_build_trim_prompt(tex_content, trim_pages), client, model=_HAIKU_MODEL, max_tokens=4000)
             )
             trim_tex = sanitise_latex(trim_tex)
             trim_tex = adjust_margin(trim_tex, 0.25)
@@ -483,15 +469,99 @@ def tailor_resume(
             if ok and get_page_count(trimmed_pdf) == 1:
                 tex_content = trim_tex
                 pdf_path = trimmed_pdf
-                logger.info("Visual OVERFLOW content trim recovered 1-page layout")
+                logger.info("Content trim fixed OVERFLOW")
             elif ok:
-                # Still overflowing -- try minimum margins as last resort
-                tex_content = adjust_margin(trim_tex, 0.20)
-                ok2, new_pdf2, _ = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
-                if ok2:
-                    pdf_path = new_pdf2
+                # Content trim not enough -- shrink margins as last resort (0.23 -> 0.21 -> 0.20)
+                for margin in [0.23, 0.21, 0.20]:
+                    shrink_tex = adjust_margin(trim_tex, margin)
+                    ok2, shrink_pdf, _ = compile_tex(shrink_tex, RESUMES_DIR, pdf_filename)
+                    if ok2 and get_page_count(shrink_pdf) == 1:
+                        tex_content = shrink_tex
+                        pdf_path = shrink_pdf
+                        logger.info("Margin %.2fin resolved OVERFLOW", margin)
+                        break
+                else:
+                    logger.warning("Job #%d: could not fit on 1 page -- flagging", job_id)
+            # continue loop to re-verify
+
         else:
             break
+
+    # Pixel safety net: final check after loop.
+    # Strategy:
+    #   gap <= 6.4% (bottom margin <= 0.75in): absorb gap by increasing bottom margin —
+    #     deterministic, always works, content reaches the margin line.
+    #   gap > 6.4%: gap too large for margin trick (looks unprofessional) —
+    #     try one last content expansion, then fall back to margin absorption.
+    _A4_H_IN = 11.69
+    safety_img = render_preview(pdf_path)
+    if safety_img is not None:
+        safety_gap = measure_page_gap(safety_img)
+        if safety_gap > 0.04:
+            new_bottom = round(safety_gap * _A4_H_IN, 3)
+            if new_bottom <= 0.75:
+                # Small gap: absorb deterministically by raising bottom margin
+                adj_tex = adjust_bottom_margin(tex_content, new_bottom)
+                ok, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
+                if ok and get_page_count(adj_pdf) == 1:
+                    pdf_path = adj_pdf
+                    logger.info(
+                        "Safety net: gap %.1f%% absorbed by bottom margin %.3fin",
+                        safety_gap * 100, new_bottom,
+                    )
+                else:
+                    logger.warning("Job #%d: bottom margin adjustment failed -- shipping as-is", job_id)
+            else:
+                # Large gap: try content expansion, then fall back to margin absorption
+                logger.warning(
+                    "Job #%d: safety net large gap %.1f%% -- trying content expansion",
+                    job_id, safety_gap * 100,
+                )
+                net_fill = max(int((1.0 - safety_gap) * 100) - 10, 55)
+                safety_tex = _extract_tex(
+                    _call_claude(_build_expand_prompt(tex_content, net_fill), client, model=_HAIKU_MODEL, max_tokens=4000)
+                )
+                safety_tex = sanitise_latex(safety_tex)
+                ok, safety_pdf, err = compile_tex(safety_tex, RESUMES_DIR, pdf_filename)
+                if not ok:
+                    for _fix in range(2):
+                        safety_tex = _extract_tex(_call_claude(_build_fix_compile_prompt(safety_tex, err), client, model=_HAIKU_MODEL, max_tokens=4000))
+                        safety_tex = sanitise_latex(safety_tex)
+                        ok, safety_pdf, err = compile_tex(safety_tex, RESUMES_DIR, pdf_filename)
+                        if ok:
+                            break
+                if ok and get_page_count(safety_pdf) == 1:
+                    check_img = render_preview(safety_pdf)
+                    post_gap = measure_page_gap(check_img) if check_img is not None else safety_gap
+                    if post_gap < safety_gap:
+                        tex_content = safety_tex
+                        pdf_path = safety_pdf
+                        logger.info("Safety net expand: gap %.1f%% -> %.1f%%", safety_gap * 100, post_gap * 100)
+                        # If gap reduced but still > 4%, absorb the remainder with margin
+                        if post_gap > 0.04:
+                            rem_bottom = round(post_gap * _A4_H_IN, 3)
+                            if rem_bottom <= 0.75:
+                                adj_tex = adjust_bottom_margin(tex_content, rem_bottom)
+                                ok2, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
+                                if ok2 and get_page_count(adj_pdf) == 1:
+                                    pdf_path = adj_pdf
+                                    logger.info("Safety net: residual gap %.1f%% absorbed by bottom margin %.3fin", post_gap * 100, rem_bottom)
+                    else:
+                        # Expand didn't help — absorb with margin as last resort
+                        rem_bottom = min(round(safety_gap * _A4_H_IN, 3), 0.75)
+                        adj_tex = adjust_bottom_margin(tex_content, rem_bottom)
+                        ok2, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
+                        if ok2 and get_page_count(adj_pdf) == 1:
+                            pdf_path = adj_pdf
+                            logger.info("Safety net fallback: margin absorption %.3fin", rem_bottom)
+                else:
+                    # Expand compile failed — absorb with margin as last resort
+                    rem_bottom = min(round(safety_gap * _A4_H_IN, 3), 0.75)
+                    adj_tex = adjust_bottom_margin(tex_content, rem_bottom)
+                    ok2, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
+                    if ok2 and get_page_count(adj_pdf) == 1:
+                        pdf_path = adj_pdf
+                        logger.info("Safety net fallback: margin absorption %.3fin after failed expand", rem_bottom)
 
     # Step 4: ATS keyword score gate
     # Extract keywords once -- reused by both score_resume and get_missing_keywords
@@ -523,13 +593,21 @@ def tailor_resume(
         missing = get_missing_keywords(pdf_path, jd_text, client, keywords=jd_keywords)
         logger.info("ATS retry %d -- missing %d keywords", ats_attempt + 1, len(missing))
         retry_prompt = _build_ats_retry_prompt(tex_content, missing, ats_score)
-        tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_HAIKU_MODEL, max_tokens=2000))
+        tex_content = _extract_tex(_call_claude(retry_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
         tex_content = sanitise_latex(tex_content)
 
-        # Recompile after keyword injection -- next loop iteration re-scores
+        # Recompile after keyword injection; auto-fix if broken
         success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
         if not success:
-            raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry: {error_log}")
+            logger.warning("Job #%d: ATS retry compile failed -- attempting auto-fix", job_id)
+            for _fix in range(2):
+                tex_content = _extract_tex(_call_claude(_build_fix_compile_prompt(tex_content, error_log), client, model=_HAIKU_MODEL, max_tokens=4000))
+                tex_content = sanitise_latex(tex_content)
+                success, pdf_path, error_log = compile_tex(tex_content, RESUMES_DIR, pdf_filename)
+                if success:
+                    break
+            if not success:
+                raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry (auto-fix also failed): {error_log}")
 
     # Step 5: Generate cover letter
     cover_letter = _generate_cover_letter(job_dict, jd_text, client)
