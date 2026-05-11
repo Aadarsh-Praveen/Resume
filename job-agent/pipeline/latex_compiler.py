@@ -147,99 +147,98 @@ def get_page_count(pdf_path: str) -> int:
     return -1
 
 
-def get_fill_percentage(pdf_path: str) -> float:
+def render_preview(pdf_path: str, dpi: int = 150):
     """
-    Estimate how full a single-page PDF is (0.0–1.0).
+    Render the first page of a PDF as a PIL Image using PyMuPDF (fitz).
 
-    Tries pypdf first (pure Python), then pdftotext.
-    A dense A4 resume at 10pt with 0.25in margins fills ~45 lines; we treat 45+ as "full".
-    Returns 1.0 if all methods fail (assume full → don't trigger unnecessary expansion).
+    Pure Python — no external binaries needed. If the PDF compiled successfully,
+    this will always return a valid image.
+
+    Returns a PIL.Image.Image on success, or None on failure.
     """
-    # Primary: pypdf text extraction
     try:
-        import pypdf
-        with open(pdf_path, "rb") as _f:
-            reader = pypdf.PdfReader(_f)
-            if reader.pages:
-                text = reader.pages[0].extract_text() or ""
-                lines = [ln for ln in text.split("\n") if ln.strip()]
-                fill = min(len(lines) / 45.0, 1.0)
-                logger.debug("pypdf fill: %d lines → %.0f%%", len(lines), fill * 100)
-                return fill
-    except Exception as _e:
-        logger.debug("pypdf fill estimation failed: %s", _e)
-
-    # Fallback: pdftotext
-    try:
-        result = subprocess.run(
-            [PDFTOTEXT, "-f", "1", "-l", "1", pdf_path, "-"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        lines = [ln for ln in result.stdout.split("\n") if ln.strip()]
-        fill = min(len(lines) / 45.0, 1.0)
-        logger.debug("pdftotext fill: %d lines → %.0f%%", len(lines), fill * 100)
-        return fill
+        import fitz  # PyMuPDF
+        import PIL.Image
+        doc = fitz.open(pdf_path)
+        if not doc.page_count:
+            logger.warning("render_preview: PDF has no pages: %s", pdf_path)
+            return None
+        pix = doc[0].get_pixmap(dpi=dpi)
+        img = PIL.Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        doc.close()
+        logger.info("render_preview: %dx%d px for %s", pix.width, pix.height, pdf_path)
+        return img
     except Exception as e:
-        logger.warning("get_fill_percentage failed: %s", e)
-        return 1.0  # assume full — don't trigger unnecessary expansion
+        logger.warning("render_preview failed: %s", e)
+        return None
 
 
-def render_preview(pdf_path: str, dpi: int = 150) -> str:
+def measure_page_gap(img) -> float:
     """
-    Render the first page of a PDF as a JPEG using pdftoppm.
+    Measure the empty gap at the bottom of a rendered page image.
 
-    The image is written to the system temp directory (not alongside the PDF)
-    so only .pdf files accumulate in the resumes/ folder.
-    Callers are responsible for deleting the file after use.
-
-    Args:
-        pdf_path: Absolute path to the PDF.
-        dpi:      Resolution for the preview image (default 150).
+    Scans pixel rows from the bottom upward to find the last row that contains
+    any content (non-white pixel). The gap is the fraction of page height below
+    that row.
 
     Returns:
-        Path to the generated JPEG file in /tmp, or empty string on failure.
+        Gap fraction 0.0–1.0.
+        0.0  = content reaches the very bottom (or measurement failed).
+        0.04 = 4% gap — within normal bottom-margin tolerance, treat as FULL.
+        0.15 = 15% gap — obvious empty space, definitely SHORT.
     """
-    stem = Path(pdf_path).stem
-    output_prefix = os.path.join(tempfile.gettempdir(), f"{stem}_preview")
     try:
-        result = subprocess.run(
-            [
-                PDFTOPPM,
-                "-jpeg",
-                "-r", str(dpi),
-                "-l", "1",          # only first page
-                "-singlefile",
-                pdf_path,
-                output_prefix,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        jpeg_path = f"{output_prefix}.jpg"
-        if result.returncode == 0 and os.path.exists(jpeg_path):
-            logger.info("Preview rendered: %s", jpeg_path)
-            return jpeg_path
-        logger.warning("pdftoppm failed: %s", result.stderr)
-        return ""
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        logger.warning("pdftoppm error: %s", e)
-        return ""
+        gray = img.convert("L")
+        w, h = gray.size
+        pixels = list(gray.getdata())
+        CONTENT_THRESHOLD = 230  # pixel value below this = ink/content (not white paper)
+
+        last_content_row = 0
+        for y in range(h - 1, -1, -1):
+            row = pixels[y * w:(y + 1) * w]
+            if any(p < CONTENT_THRESHOLD for p in row):
+                last_content_row = y
+                break
+
+        gap = (h - last_content_row - 1) / h
+        logger.debug("measure_page_gap: last content row %d/%d -> gap %.1f%%", last_content_row, h, gap * 100)
+        return gap
+    except Exception as e:
+        logger.warning("measure_page_gap failed: %s -- assuming no gap", e)
+        return 0.0  # assume OK on failure so we don't trigger unnecessary expansion
 
 
 def adjust_margin(tex_content: str, margin_in: float) -> str:
     """
     Replace the \\geometry margin value in a .tex file.
 
-    Clamps to [0.20, 0.28] inches. Used when content overflows 1 page
-    and we want to gain space by reducing margins before asking Claude to trim.
+    Clamps to [0.20, 0.25] inches.
+    0.25in is the default and maximum (used for normal layout and SHORT recovery).
+    0.20in is the minimum (used as last resort when trimming OVERFLOW).
     """
-    margin_in = max(0.20, min(0.28, round(margin_in, 2)))
+    margin_in = max(0.20, min(0.25, round(margin_in, 2)))
     return re.sub(
         r"(\\usepackage\[)[^\]]*?(]{geometry})",
         rf"\g<1>a4paper,margin={margin_in}in\g<2>",
+        tex_content,
+    )
+
+
+def adjust_bottom_margin(tex_content: str, bottom_in: float) -> str:
+    """
+    Set only the bottom margin, keeping top/left/right at 0.25in.
+
+    Used by the pixel safety net to absorb small page gaps without adding content.
+    If the last content row sits at X% from the bottom of the page, setting
+    bottom margin = X% * page_height eliminates the visible gap entirely.
+
+    Clamps to [0.25, 0.75] inches (beyond 0.75in the gap is too large for margin
+    absorption — content expansion is needed instead).
+    """
+    bottom_in = max(0.25, min(0.75, round(bottom_in, 3)))
+    return re.sub(
+        r"(\\usepackage\[)[^\]]*?(]{geometry})",
+        rf"\g<1>a4paper,top=0.25in,left=0.25in,right=0.25in,bottom={bottom_in}in\g<2>",
         tex_content,
     )
 
