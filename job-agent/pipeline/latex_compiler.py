@@ -243,6 +243,29 @@ def adjust_bottom_margin(tex_content: str, bottom_in: float) -> str:
     )
 
 
+def find_long_bullets(tex_content: str, max_words: int = 24) -> list[str]:
+    """
+    Find \\item bullets whose word count exceeds max_words.
+
+    Bullets over 24 words risk wrapping to 3 lines on A4 at 11pt with 0.25in margins.
+    Returns the raw LaTeX of each offending item (truncated to 120 chars) so they
+    can be passed to a fix prompt.
+    """
+    items = re.findall(
+        r"\\item\s+(.*?)(?=\\item|\\end\{(?:itemize|enumerate)\})",
+        tex_content,
+        re.DOTALL,
+    )
+    long = []
+    for item in items:
+        # Unwrap \cmd{text} -> text, then strip remaining commands/braces
+        clean = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", item)
+        clean = re.sub(r"\\[a-zA-Z]+", " ", clean)
+        clean = re.sub(r"[{}\\%&$#_^~]", " ", clean)
+        if len(clean.split()) > max_words:
+            long.append(item.strip()[:120])
+    return long
+
 
 def sanitise_latex(tex_content: str) -> str:
     """
