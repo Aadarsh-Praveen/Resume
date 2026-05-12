@@ -293,8 +293,11 @@ def sanitise_latex(tex_content: str) -> str:
         result,
     )
 
-    # ── 3. Escape bare % (not already escaped) ────────────────────────────────
-    result = re.sub(r"(?<!\\)%", r"\\%", result)
+    # ── 3. Escape bare % used as percentage — NOT LaTeX line comments ─────────
+    # A LaTeX comment is any % at the start of a line (after optional whitespace)
+    # or after a whitespace character. Only escape % immediately preceded by a
+    # non-whitespace char, e.g. "85%" → "85\%" but "% Header" stays a comment.
+    result = re.sub(r"(?m)(?<!\\)(?<=\S)%", r"\\%", result)
 
     # ── 4. Escape bare & (not already escaped) ────────────────────────────────
     result = re.sub(r"(?<!\\)&", r"\\&", result)
