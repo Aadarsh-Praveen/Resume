@@ -28,6 +28,7 @@ from config import (
 from pipeline.latex_compiler import (
     compile_tex, get_page_count,
     sanitise_latex, adjust_margin, adjust_bottom_margin, render_preview, measure_page_gap,
+    find_long_bullets,
 )
 from pipeline.ats_scorer import score_resume, get_missing_keywords, extract_keywords
 
@@ -134,8 +135,9 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
         f"This resume is only ~{fill_pct}% full and must fill the ENTIRE page.\n\n"
         f"{guidance}\n\n"
         f"Rules:\n"
-        f"- Every bullet: 20-28 words, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
-        f"- No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 8 words.\n"
+        f"- Every bullet: 18-22 words max, [OUTCOME + METRIC] by [HOW YOU DID IT].\n"
+        f"- CRITICAL: each bullet MUST fit in exactly 2 lines -- never 3. Hard cap: 22 words.\n"
+        f"- No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 6 words.\n"
         f"- Do NOT add a Certifications or Publications section.\n"
         f"- Do NOT add blank lines or \\vspace -- real content only.\n"
         f"- Summary: 3-4 lines max -- never exceed 4 lines.\n"
@@ -154,12 +156,13 @@ def _build_trim_prompt(long_tex: str, page_count: int) -> str:
         f"1. DELETE Certifications section entirely (always safe to remove).\n"
         f"2. DELETE Publications section entirely.\n"
         f"3. Shorten any bullet exceeding 22 words -- trim trailing clauses, keep the impact.\n"
+        f"   CRITICAL: every bullet MUST fit in at most 2 lines -- never 3.\n"
         f"4. Most recent role: max 4 bullets. Second role: max 3. Oldest role: max 3.\n"
         f"5. Projects: keep top 2 most JD-relevant only, max 3 bullets each, ~20 words each.\n"
         f"6. Summary: 3 sentences, 3-4 lines max.\n"
         f"7. Skills: max 4 categories, 6 tools each.\n"
         f"8. Company line format: CompanyName \\hfill City, ST -- no pipes, no product names.\n\n"
-        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 8 words.\n"
+        f"No widow lines: if a bullet wraps to 2 lines, the 2nd line must have >= 6 words.\n"
         f"Do NOT remove any job roles, companies, or dates.\n"
         f"Return ONLY the complete corrected .tex file -- no explanations.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
@@ -175,6 +178,22 @@ def _build_ats_retry_prompt(current_tex: str, missing_keywords: list[str], score
         f"Do NOT fabricate experience. Only use these where already implied.\n\n"
         f"=== CURRENT .TEX ===\n{current_tex}\n\n"
         f"Return the complete corrected .tex file and nothing else."
+    )
+
+
+def _build_shorten_bullets_prompt(tex: str, long_bullets: list[str]) -> str:
+    bullets_list = "\n".join(f"  - {b}" for b in long_bullets[:10])
+    return (
+        f"The following bullet points are too long and will wrap to 3 or more lines on the page.\n"
+        f"Each bullet MUST fit in exactly 2 lines on A4 at 11pt with 0.25in margins (max 22 words).\n\n"
+        f"Bullets to shorten:\n{bullets_list}\n\n"
+        f"Rules:\n"
+        f"- Shorten ONLY the listed bullets -- do not change anything else.\n"
+        f"- Keep the impact metric and action verb intact.\n"
+        f"- Target: 18-22 words per bullet.\n"
+        f"- If a bullet wraps to 2 lines, the 2nd line must have >= 6 words.\n\n"
+        f"Return the complete corrected .tex file and nothing else.\n\n"
+        f"=== CURRENT .TEX ===\n{tex}"
     )
 
 
@@ -354,6 +373,21 @@ def tailor_resume(
         tex_content = sanitise_latex(tex_content)
 
     logger.info("PDF compiled: %s", pdf_path)
+
+    # Bullet length gate: detect and fix any bullets > 24 words before proceeding.
+    # Bullets over 24 words risk wrapping to 3 lines on A4 at 11pt with 0.25in margins.
+    long_bullets = find_long_bullets(tex_content)
+    if long_bullets:
+        logger.warning("Job #%d: %d bullets exceed 24 words -- shortening before page gates", job_id, len(long_bullets))
+        shorten_tex = _extract_tex(_call_claude(_build_shorten_bullets_prompt(tex_content, long_bullets), client, model=_HAIKU_MODEL, max_tokens=4000))
+        shorten_tex = sanitise_latex(shorten_tex)
+        ok, shorten_pdf, _ = compile_tex(shorten_tex, RESUMES_DIR, pdf_filename)
+        if ok and get_page_count(shorten_pdf) == 1:
+            tex_content = shorten_tex
+            pdf_path = shorten_pdf
+            logger.info("Bullet shorten: %d long bullets fixed", len(long_bullets))
+        else:
+            logger.warning("Job #%d: bullet shorten compile failed -- continuing with original", job_id)
 
     # Step 3: Page count gate -- content trim then margin shrink
     # Pass 1: ask Claude to trim content (up to MAX_PAGE_RETRIES times)
@@ -608,6 +642,65 @@ def tailor_resume(
                     break
             if not success:
                 raise RuntimeError(f"Job #{job_id}: compile failed after ATS retry (auto-fix also failed): {error_log}")
+        # Gate: ATS keyword injection must not push to 2 pages
+        if get_page_count(pdf_path) > 1:
+            logger.warning("Job #%d: ATS keyword injection overflowed -- trimming back", job_id)
+            ats_trim_tex = _extract_tex(_call_claude(_build_trim_prompt(tex_content, 2), client, model=_HAIKU_MODEL, max_tokens=4000))
+            ats_trim_tex = sanitise_latex(ats_trim_tex)
+            ats_trim_tex = adjust_margin(ats_trim_tex, 0.25)
+            ok_t, ats_trim_pdf, _ = compile_tex(ats_trim_tex, RESUMES_DIR, pdf_filename)
+            if ok_t and get_page_count(ats_trim_pdf) == 1:
+                tex_content = ats_trim_tex
+                pdf_path = ats_trim_pdf
+                logger.info("ATS overflow: trimmed back to 1 page")
+            else:
+                logger.warning("Job #%d: ATS overflow trim failed -- shipping as-is", job_id)
+
+    # ── Final hard gate ───────────────────────────────────────────────────────
+    # Run up to 2 correction passes. Each pass: fix page count first, then absorb
+    # any remaining bottom gap via margin adjustment. Only ships when both pass.
+    for _final in range(2):
+        _gate_changed = False
+
+        # 1. Page count must be exactly 1
+        gate_pages = get_page_count(pdf_path)
+        if gate_pages > 1:
+            logger.warning("Job #%d: FINAL GATE -- %d pages -- emergency trim", job_id, gate_pages)
+            emerg_tex = _extract_tex(
+                _call_claude(_build_trim_prompt(tex_content, gate_pages), client, model=_HAIKU_MODEL, max_tokens=4000)
+            )
+            emerg_tex = sanitise_latex(emerg_tex)
+            for _margin in [0.25, 0.22, 0.20]:
+                emerg_tex2 = adjust_margin(emerg_tex, _margin)
+                ok, emerg_pdf, _ = compile_tex(emerg_tex2, RESUMES_DIR, pdf_filename)
+                if ok and get_page_count(emerg_pdf) == 1:
+                    tex_content = emerg_tex2
+                    pdf_path = emerg_pdf
+                    logger.info("Final gate: trimmed to 1 page at margin %.2fin", _margin)
+                    _gate_changed = True
+                    break
+            else:
+                logger.warning("Job #%d: FINAL GATE -- could not trim to 1 page -- shipping as-is", job_id)
+                break
+
+        # 2. Bottom gap must be < 4%
+        gate_img = render_preview(pdf_path)
+        if gate_img is not None:
+            gate_gap = measure_page_gap(gate_img)
+            if gate_gap > 0.04:
+                gate_bottom = min(round(gate_gap * _A4_H_IN, 3), 0.75)
+                adj_tex = adjust_bottom_margin(tex_content, gate_bottom)
+                ok, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
+                if ok and get_page_count(adj_pdf) == 1:
+                    tex_content = adj_tex
+                    pdf_path = adj_pdf
+                    logger.info("Final gate: gap %.1f%% absorbed by bottom margin %.3fin", gate_gap * 100, gate_bottom)
+                    _gate_changed = True
+                else:
+                    logger.warning("Job #%d: FINAL GATE -- margin absorption failed (gap %.1f%%)", job_id, gate_gap * 100)
+
+        if not _gate_changed:
+            break  # nothing changed -- either all good or unfixable
 
     # Step 5: Generate cover letter
     cover_letter = _generate_cover_letter(job_dict, jd_text, client)
