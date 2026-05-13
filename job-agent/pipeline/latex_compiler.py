@@ -267,6 +267,57 @@ def find_long_bullets(tex_content: str, max_words: int = 24) -> list[str]:
     return long
 
 
+def find_widow_bullets(tex_content: str, words_per_line: int = 16) -> list[str]:
+    """
+    Find bullets where the 2nd wrapped line has fewer than 8 words.
+
+    On A4 at 11pt/0.25in margins, a bullet line holds ~16 words.
+    A bullet with 17-23 words wraps: line 2 = total - 16 words.
+    If line 2 < 8 words it looks sparse (< ~50% full) — a widow line.
+
+    Returns the raw LaTeX of each offending item (truncated to 120 chars).
+    """
+    items = re.findall(
+        r"\\item\s+(.*?)(?=\\item|\\end\{(?:itemize|enumerate)\})",
+        tex_content,
+        re.DOTALL,
+    )
+    widows = []
+    for item in items:
+        clean = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", item)
+        clean = re.sub(r"\\[a-zA-Z]+", " ", clean)
+        clean = re.sub(r"[{}\\%&$#_^~]", " ", clean)
+        n = len(clean.split())
+        line2_words = n - words_per_line
+        if 0 < line2_words < 8:
+            widows.append(item.strip()[:120])
+    return widows
+
+
+def estimate_summary_lines(tex_content: str, words_per_line: int = 16) -> int:
+    """
+    Estimate how many rendered lines the Summary section occupies.
+
+    Extracts text between \\section{Summary} and the next \\section,
+    strips LaTeX markup, counts words, divides by words_per_line.
+
+    Returns estimated line count, or 0 if no summary section found.
+    """
+    match = re.search(
+        r"\\section\{Summary\}(.*?)(?=\\section|\Z)",
+        tex_content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return 0
+    text = match.group(1)
+    text = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\[a-zA-Z]+", " ", text)
+    text = re.sub(r"[{}\\%&$#_^~]", " ", text)
+    words = text.split()
+    return max(1, round(len(words) / words_per_line)) if words else 0
+
+
 def sanitise_latex(tex_content: str) -> str:
     """
     LaTeX sanitiser applied before every pdflatex call.
