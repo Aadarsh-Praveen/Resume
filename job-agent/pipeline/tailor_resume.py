@@ -682,6 +682,17 @@ def tailor_resume(
                     logger.info("Safety net content fill: gap %.1f%% -> %.1f%%", safety_gap * 100, post_gap * 100)
                     safety_gap = post_gap  # update for fallback below
 
+                    # Post-fill bullet sanity check — extended bullets may have gone over 30 words
+                    post_long = find_long_bullets(tex_content)
+                    if post_long:
+                        logger.warning("Job #%d: post-fill %d long bullets -- shortening", job_id, len(post_long))
+                        pl_tex = _extract_tex(_call_claude(_build_shorten_bullets_prompt(tex_content, post_long), client, model=_HAIKU_MODEL, max_tokens=4000))
+                        pl_tex = sanitise_latex(pl_tex)
+                        ok_pl, pl_pdf, _ = compile_tex(pl_tex, RESUMES_DIR, pdf_filename)
+                        if ok_pl and get_page_count(pl_pdf) == 1:
+                            tex_content = pl_tex
+                            pdf_path = pl_pdf
+
             # If gap remains > 4% after content fill, absorb remainder with bottom margin
             if safety_gap > 0.04:
                 rem_bottom = min(round(safety_gap * _A4_H_IN, 3), 0.75)
