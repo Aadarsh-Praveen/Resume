@@ -97,16 +97,19 @@ def _build_tailoring_prompt(jd_text: str, include_certs: bool = False) -> str:
         "DO NOT include a Certifications section -- the JD does not require it."
     )
     return (
-        f"You are a senior recruiter and resume writer. Tailor the master resume (in the system) "
-        f"for the job description below. Think about what a hiring manager will scan in 10 seconds.\n\n"
+        f"Tailor the master resume (in the system prompt) for the job description below.\n\n"
         f"=== JOB DESCRIPTION ===\n{jd_text[:5000]}\n\n"
-        f"CERTIFICATIONS RULE: {cert_instruction}\n"
-        f"PUBLICATIONS RULE: DO NOT include a Publications section -- omit it entirely.\n\n"
-        f"Layout rules (non-negotiable — a sloppy layout gets the resume binned):\n"
-        f"- Summary: exactly 3-4 lines (3 sentences). Never 5+ lines.\n"
-        f"- Bullets: ≤13 words (1 line) OR 21-22 words (2 full lines). NEVER 14-20 words.\n"
-        f"  14-20 word bullets leave a short dangling 2nd line that looks unprofessional.\n"
-        f"- If a bullet wraps to 2 lines, line 2 must have >= 8 words.\n"
+        f"CONTENT RULES (most important):\n"
+        f"- STRICT: only use information from the master resume. Do NOT invent, add, or imply any\n"
+        f"  fact, degree, certification, domain, company, project, or metric not already there.\n"
+        f"- Reframe existing bullets to use JD keywords — never fabricate new experience.\n"
+        f"- CERTIFICATIONS: {cert_instruction}\n"
+        f"- PUBLICATIONS: DO NOT include a Publications section.\n\n"
+        f"LAYOUT RULES:\n"
+        f"- Summary: exactly 3-4 lines (3 sentences). Never 5+.\n"
+        f"- Bullets: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
+        f"  19-27 word bullets leave a short dangling 2nd line — looks unprofessional.\n"
+        f"- If a bullet wraps to 2 lines, line 2 must have >= 10 words.\n"
         f"- Skills: 4 categories x 6-7 tools each.\n"
         f"- No \\vspace, no blank lines, no Certifications, no Publications.\n\n"
         f"Return ONLY the complete tailored .tex file -- no explanations."
@@ -140,17 +143,17 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
             "Do NOT add new bullets -- deepen what's already there."
         )
     return (
-        f"You're a senior recruiter reviewing this resume. It's only ~{fill_pct}% full — "
-        f"that empty space at the bottom signals to every hiring manager that the candidate ran out of things to say.\n\n"
+        f"This resume is only ~{fill_pct}% full. Expand it to fill the page.\n\n"
         f"{guidance}\n\n"
-        f"Bullet rules (non-negotiable):\n"
-        f"- Each bullet: ≤13 words (1 clean line) OR 21-22 words (2 full lines). NEVER 14-20 words.\n"
-        f"  14-20 word bullets leave a pathetically short second line that screams bad formatting.\n"
-        f"- Format: [action verb] + [specific outcome/metric] + [how/tool]. Outcome first.\n"
-        f"- If a bullet wraps to 2 lines, the 2nd line must have >= 8 words (looks substantial).\n"
-        f"- Summary: exactly 3-4 lines. Not 5, not 2.\n"
-        f"- Skills: 4 categories x 6-7 tools each.\n"
-        f"- Do NOT add Certifications, Publications, blank lines, or \\vspace.\n\n"
+        f"CRITICAL — no hallucination: only add facts already present elsewhere in this .tex file.\n"
+        f"Do NOT invent new projects, tools, metrics, companies, or degrees.\n"
+        f"Expand by adding specifics that are directly implied by the existing role content.\n\n"
+        f"Bullet rules:\n"
+        f"- Each bullet: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
+        f"  19-27 word bullets leave a short dangling 2nd line.\n"
+        f"- If 2 lines: line 2 must have >= 10 words.\n"
+        f"- Summary: exactly 3-4 lines. Not 5.\n"
+        f"- No Certifications, Publications, blank lines, or \\vspace.\n\n"
         f"Target: ~95% page fill. Stop before 2 pages.\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{sparse_tex}"
@@ -159,20 +162,21 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
 
 def _build_trim_prompt(long_tex: str, page_count: int) -> str:
     return (
-        f"This resume is {page_count} pages. A recruiter will discard it in 3 seconds. It MUST be exactly 1 page.\n\n"
+        f"This resume is {page_count} pages. It MUST be exactly 1 page.\n\n"
         f"Cut the MINIMUM needed. Apply in this order:\n"
         f"1. DELETE Certifications section entirely.\n"
         f"2. DELETE Publications section entirely.\n"
-        f"3. Shorten bullets over 22 words — cut trailing clauses, keep the metric.\n"
+        f"3. Shorten any bullet over 30 words — cut trailing clauses, keep the metric.\n"
         f"4. Most recent role: max 4 bullets. Second role: max 3. Oldest: max 3.\n"
         f"5. Projects: top 2 only, max 3 bullets each.\n"
-        f"6. Summary: 3 sentences, exactly 3-4 lines. No 5-line summaries.\n"
+        f"6. Summary: 3 sentences, exactly 3-4 lines.\n"
         f"7. Skills: 4 categories, 6 tools each.\n"
         f"8. Company line: CompanyName \\hfill City, ST — no pipes, no product labels.\n\n"
-        f"Bullet formatting (a recruiter notices sloppy line breaks):\n"
-        f"- Each bullet: ≤13 words (1 line) OR 21-22 words (2 full lines). NEVER 14-20 words.\n"
-        f"- If a bullet wraps to 2 lines, line 2 must have >= 8 words. Never leave 1-3 words dangling.\n\n"
+        f"Bullet formatting:\n"
+        f"- Each bullet: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
+        f"- If a bullet wraps to 2 lines, line 2 must have >= 10 words.\n\n"
         f"Do NOT remove job roles, companies, or dates.\n"
+        f"Do NOT invent any new content — only cut or shorten existing text.\n"
         f"Return ONLY the complete corrected .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{long_tex}"
     )
@@ -193,66 +197,67 @@ def _build_ats_retry_prompt(current_tex: str, missing_keywords: list[str], score
 def _build_shorten_bullets_prompt(tex: str, long_bullets: list[str]) -> str:
     bullets_list = "\n".join(f"  - {b}" for b in long_bullets[:10])
     return (
-        f"These bullets wrap to 3+ lines. A recruiter sees that as word salad — fix them.\n\n"
+        f"These bullets wrap to 3+ lines — fix them by cutting, not by adding new content.\n\n"
         f"Bullets to shorten:\n{bullets_list}\n\n"
         f"Rules:\n"
         f"- Shorten ONLY the listed bullets. Touch nothing else.\n"
-        f"- Target: ≤13 words (1 line) OR 21-22 words (2 full lines).\n"
-        f"- NEVER write 14-20 words — those leave a short dangling second line.\n"
-        f"- Keep the action verb and the strongest metric intact.\n"
-        f"- If 2 lines: line 2 must have >= 8 words.\n\n"
+        f"- Target: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
+        f"- Keep the action verb and the strongest metric. Cut filler clauses.\n"
+        f"- If 2 lines: line 2 must have >= 10 words.\n"
+        f"- Do NOT add any new facts or claims.\n\n"
         f"Return the complete corrected .tex file and nothing else.\n\n"
         f"=== CURRENT .TEX ===\n{tex}"
     )
 
 
 def _build_fill_gap_prompt(tex: str, gap_lines: int, jd_snippet: str) -> str:
-    """Add real content to fill bottom whitespace — content first, not margin tricks."""
-    if gap_lines <= 1:
+    """Expand existing bullets to fill bottom whitespace — no new invented content."""
+    if gap_lines <= 2:
         instruction = (
-            "Add exactly 1 bullet (≤13 words, fits 1 line) to the most recent work experience "
-            "or the top project — whichever is more relevant to the job."
+            "Extend 2-3 existing bullets in the most recent work experience: "
+            "add the specific tool, metric, or outcome that the bullet already implies but doesn't state. "
+            "Do NOT add new bullet points."
         )
-    elif gap_lines <= 3:
+    elif gap_lines <= 4:
         instruction = (
-            "Add exactly 1 bullet (21-22 words, fills 2 lines) to the most recent work experience. "
-            "OR add 2 short bullets (≤13 words each) spread across 2 different sections."
+            "Extend 3-4 existing bullets across the work experience sections: "
+            "add concrete numbers, tool names, or scale already implied by each bullet. "
+            "If extending is not enough, add ONE new bullet to the most recent role "
+            "using only facts stated elsewhere in this same role."
         )
     else:
         instruction = (
-            "Add 2-3 bullets across work experience and projects. "
-            "Space them out so the page looks balanced, not bottom-heavy."
+            "Extend 4-6 existing bullets across work experience and projects: "
+            "each extension must add a specific number, tool, or scope already present in the role. "
+            "Add at most 1 new bullet per section, only using facts from the existing role content."
         )
     return (
-        f"You're a recruiter who just noticed a big empty space at the bottom of this resume.\n"
-        f"Empty space signals to hiring managers that the candidate has nothing more to say.\n"
-        f"Fill it with real, specific achievements — not generic filler.\n\n"
-        f"Gap to fill: ~{gap_lines} line(s).\n\n"
+        f"This resume has ~{gap_lines} line(s) of empty space at the bottom. Fill it.\n\n"
         f"{instruction}\n\n"
-        f"Rules for new content:\n"
-        f"- Must be truthful and consistent with existing roles (same tech stack, domain, company).\n"
-        f"- Format: [strong action verb] + [specific outcome/metric] + [tool/method].\n"
-        f"- Each bullet: ≤13 words (1 line) OR 21-22 words (2 full lines). NEVER 14-20 words.\n"
-        f"- Line 2 of any 2-line bullet must have >= 8 words.\n"
-        f"- No vspace, blank lines, or layout changes — only real bullet content.\n"
+        f"STRICT anti-hallucination rule:\n"
+        f"- Every word you add must be directly derivable from the existing .tex content.\n"
+        f"- Do NOT invent new projects, companies, degrees, certifications, or tools not already listed.\n"
         f"- Do NOT add new sections.\n\n"
-        f"Job context for relevance:\n{jd_snippet[:400]}\n\n"
+        f"Bullet rules:\n"
+        f"- Each bullet: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
+        f"- Line 2 of a 2-line bullet must have >= 10 words.\n"
+        f"- No vspace or blank lines.\n\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{tex}"
     )
 
 
 def _build_fix_widow_prompt(tex: str, widow_bullets: list[str]) -> str:
-    """Fix widow lines — bullets where line 2 has < 8 words."""
+    """Fix widow lines — bullets where line 2 has < 10 words."""
     bullets_list = "\n".join(f"  - {b}" for b in widow_bullets[:10])
     return (
-        f"A recruiter immediately notices bullets with a weak 2nd line — 2-3 dangling words "
-        f"that look like a formatting mistake, not deliberate writing.\n\n"
-        f"Problem bullets (line 2 has too few words):\n{bullets_list}\n\n"
-        f"Fix each one using exactly ONE of these approaches:\n"
-        f"  A) EXTEND to 21-22 words: add a specific metric, tool, or outcome so both lines look full.\n"
-        f"  B) SHORTEN to ≤13 words: cut to the core impact so it fits cleanly on 1 line.\n\n"
-        f"NEVER leave a bullet at 14-20 words — always produces a weak second line.\n"
+        f"These bullets have a weak 2nd line (too few words — looks like a formatting mistake).\n\n"
+        f"Problem bullets:\n{bullets_list}\n\n"
+        f"Fix each one using exactly ONE approach:\n"
+        f"  A) SHORTEN to ≤18 words so it fits cleanly on 1 line (preferred — no risk of adding wrong info).\n"
+        f"  B) EXTEND to 28-30 words so both lines look full — only add specifics already present in this role.\n\n"
+        f"NEVER write 19-27 words — always produces a weak second line.\n"
+        f"Do NOT invent any new facts, tools, metrics, or claims.\n"
         f"Fix ONLY the listed bullets. Do NOT change anything else.\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{tex}"
@@ -263,22 +268,22 @@ def _build_fix_summary_prompt(tex: str, current_lines: int) -> str:
     """Fix summary to exactly 3-4 rendered lines."""
     if current_lines < 3:
         action = (
-            f"The summary is only ~{current_lines} line(s). "
-            f"Recruiters expect 3-4 solid lines — a 1-2 line summary looks like a placeholder. "
-            f"Expand it: add a specific achievement, a tech stack highlight, or an impact metric."
+            f"The summary is only ~{current_lines} line(s) — expand it to 3-4 lines. "
+            f"Use only facts already in this resume: existing job titles, metrics, and tools. "
+            f"Do NOT invent degrees, certifications, or claims not present elsewhere."
         )
     else:
         action = (
-            f"The summary is {current_lines}+ lines. Recruiters skim — anything over 4 lines gets ignored. "
-            f"Cut to 3-4 lines: keep the strongest metric and the most relevant tech. Remove generic phrases."
+            f"The summary is {current_lines}+ lines — cut it to 3-4 lines. "
+            f"Keep the strongest metric and most relevant tech. Remove filler and weak adjectives."
         )
     return (
         f"{action}\n\n"
         f"Summary structure (3 sentences):\n"
-        f"  1. Title + years of experience + core domain\n"
-        f"  2. Your strongest 1-2 hard metrics (%, latency, scale, revenue)\n"
-        f"  3. Key technologies and the value they deliver\n\n"
-        f"No buzzwords: 'passionate', 'dynamic', 'innovative', 'seasoned' — delete on sight.\n"
+        f"  1. Title + years + core domain (from existing experience)\n"
+        f"  2. 1-2 hard metrics already mentioned in the resume\n"
+        f"  3. Key technologies from the Skills section\n\n"
+        f"No buzzwords: 'passionate', 'dynamic', 'innovative', 'PhD-track', 'seasoned'.\n"
         f"Only change the Summary section. Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{tex}"
     )

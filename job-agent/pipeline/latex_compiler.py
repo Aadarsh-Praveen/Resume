@@ -243,13 +243,12 @@ def adjust_bottom_margin(tex_content: str, bottom_in: float) -> str:
     )
 
 
-def find_long_bullets(tex_content: str, max_words: int = 24) -> list[str]:
+def find_long_bullets(tex_content: str, max_words: int = 30) -> list[str]:
     """
     Find \\item bullets whose word count exceeds max_words.
 
-    Bullets over 24 words risk wrapping to 3 lines on A4 at 11pt with 0.25in margins.
-    Returns the raw LaTeX of each offending item (truncated to 120 chars) so they
-    can be passed to a fix prompt.
+    Good 2-line bullets run 28-30 words. Bullets over 30 words risk 3 lines.
+    Returns the raw LaTeX of each offending item (truncated to 120 chars).
     """
     items = re.findall(
         r"\\item\s+(.*?)(?=\\item|\\end\{(?:itemize|enumerate)\})",
@@ -267,13 +266,14 @@ def find_long_bullets(tex_content: str, max_words: int = 24) -> list[str]:
     return long
 
 
-def find_widow_bullets(tex_content: str, words_per_line: int = 16) -> list[str]:
+def find_widow_bullets(tex_content: str, words_per_line: int = 18) -> list[str]:
     """
-    Find bullets where the 2nd wrapped line has fewer than 8 words.
+    Find bullets where the 2nd wrapped line has fewer than 10 words.
 
-    On A4 at 11pt/0.25in margins, a bullet line holds ~16 words.
-    A bullet with 17-23 words wraps: line 2 = total - 16 words.
-    If line 2 < 8 words it looks sparse (< ~50% full) — a widow line.
+    On A4 at 11pt/0.25in margins with bullet indent, a line holds ~18 words.
+    A bullet with 19-27 words wraps: line 2 = total - 18 words.
+    If line 2 < 10 words it looks sparse (< ~55% full) — a widow line.
+    Good 2-line bullets need 28-30 words (line 2 = 10-12 words = 55-67%).
 
     Returns the raw LaTeX of each offending item (truncated to 120 chars).
     """
@@ -289,12 +289,12 @@ def find_widow_bullets(tex_content: str, words_per_line: int = 16) -> list[str]:
         clean = re.sub(r"[{}\\%&$#_^~]", " ", clean)
         n = len(clean.split())
         line2_words = n - words_per_line
-        if 0 < line2_words < 8:
+        if 0 < line2_words < 10:
             widows.append(item.strip()[:120])
     return widows
 
 
-def estimate_summary_lines(tex_content: str, words_per_line: int = 16) -> int:
+def estimate_summary_lines(tex_content: str, words_per_line: int = 18) -> int:
     """
     Estimate how many rendered lines the Summary section occupies.
 
@@ -344,13 +344,19 @@ def sanitise_latex(tex_content: str) -> str:
         result,
     )
 
-    # ── 3. Escape bare % used as percentage — NOT LaTeX line comments ─────────
-    # A LaTeX comment is any % at the start of a line (after optional whitespace)
-    # or after a whitespace character. Only escape % immediately preceded by a
-    # non-whitespace char, e.g. "85%" → "85\%" but "% Header" stays a comment.
+    # ── 3. Suppress page numbers — force \pagestyle{empty} ────────────────────
+    # Default LaTeX pagestyle prints "1" at the bottom. Always empty it.
+    result = re.sub(r"\\pagestyle\{[^}]*\}", r"\\pagestyle{empty}", result)
+    result = re.sub(r"\\thispagestyle\{[^}]*\}", r"\\thispagestyle{empty}", result)
+    if r"\pagestyle{empty}" not in result and r"\begin{document}" in result:
+        result = result.replace(r"\begin{document}", r"\begin{document}" + "\n\\pagestyle{empty}", 1)
+
+    # ── 5. Escape bare % used as percentage — NOT LaTeX line comments ─────────
+    # Only escape % immediately preceded by a non-whitespace char (e.g. "85%").
+    # Leave line-starting % alone — those are LaTeX comments (invisible in output).
     result = re.sub(r"(?m)(?<!\\)(?<=\S)%", r"\\%", result)
 
-    # ── 4. Escape bare & (not already escaped) ────────────────────────────────
+    # ── 6. Escape bare & (not already escaped) ────────────────────────────────
     result = re.sub(r"(?<!\\)&", r"\\&", result)
 
     return result
