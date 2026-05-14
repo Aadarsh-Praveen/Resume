@@ -264,6 +264,144 @@ def _build_fix_widow_prompt(tex: str, widow_bullets: list[str]) -> str:
     )
 
 
+def _gemini_inspect_resume(img) -> dict:
+    """
+    Send rendered resume image to Gemini for visual quality inspection.
+
+    Returns a dict with boolean flags for each detected issue, or {} on failure.
+    """
+    try:
+        import time
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        vision_model = genai.GenerativeModel("gemini-2.5-flash")
+
+        prompt = (
+            "Inspect this resume page image carefully and answer each question with YES or NO only.\n\n"
+            "1. OVERFLOW: Is any text cut off at the bottom, or does content clearly run beyond the page?\n"
+            "2. GAP: Is there visible empty white space at the bottom (more than a normal bottom margin)?\n"
+            "3. THREE_LINE_BULLETS: Are there any bullet points that span 3 or more lines?\n"
+            "4. WIDOW_LINES: Are there any bullet points where the second line has only 1-3 words (stub line)?\n"
+            "5. SUMMARY_SHORT: Does the summary/profile section appear to be less than 3 lines long?\n"
+            "6. SUMMARY_LONG: Does the summary/profile section appear to be more than 4 lines long?\n\n"
+            "Respond in EXACTLY this format (one answer per line):\n"
+            "OVERFLOW: YES/NO\n"
+            "GAP: YES/NO\n"
+            "THREE_LINE_BULLETS: YES/NO\n"
+            "WIDOW_LINES: YES/NO\n"
+            "SUMMARY_SHORT: YES/NO\n"
+            "SUMMARY_LONG: YES/NO"
+        )
+
+        for attempt in range(3):
+            try:
+                response = vision_model.generate_content([img, prompt])
+                text = response.text.strip()
+                result = {
+                    "overflow": False,
+                    "gap": False,
+                    "three_line_bullets": False,
+                    "widow_lines": False,
+                    "summary_short": False,
+                    "summary_long": False,
+                }
+                for line in text.splitlines():
+                    line = line.strip()
+                    for key, field in [
+                        ("OVERFLOW:", "overflow"),
+                        ("GAP:", "gap"),
+                        ("THREE_LINE_BULLETS:", "three_line_bullets"),
+                        ("WIDOW_LINES:", "widow_lines"),
+                        ("SUMMARY_SHORT:", "summary_short"),
+                        ("SUMMARY_LONG:", "summary_long"),
+                    ]:
+                        if line.startswith(key):
+                            result[field] = "YES" in line.upper()
+                logger.info("Gemini final check result: %s", result)
+                return result
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    wait = 20 * (attempt + 1)
+                    logger.warning("Gemini inspect 429 -- retrying in %ds", wait)
+                    time.sleep(wait)
+                else:
+                    raise
+    except Exception as e:
+        logger.warning("Gemini inspect failed: %s -- skipping final check", e)
+        return {}
+
+
+def _build_gemini_fix_prompt(tex: str, issues: dict, jd_text: str) -> str:
+    """Build a targeted Haiku fix prompt from Gemini's visual inspection findings."""
+    actions = []
+
+    if issues.get("overflow"):
+        actions.append(
+            "OVERFLOW: Content runs beyond 1 page. Cut the minimum needed:\n"
+            "  - Remove Certifications/Publications sections if present.\n"
+            "  - Shorten bullets over 30 words (keep the metric, cut filler).\n"
+            "  - Cap most recent role at 4 bullets, others at 3 each.\n"
+            "  - Projects: top 2 only, 3 bullets each."
+        )
+
+    if issues.get("three_line_bullets"):
+        actions.append(
+            "THREE_LINE_BULLETS: Bullets spanning 3+ lines detected. Shorten them:\n"
+            "  - Target ≤18 words (1 line) OR 28-30 words (clean 2 lines).\n"
+            "  - NEVER 19-27 words — always produces a weak second line.\n"
+            "  - Keep the action verb and strongest metric. Cut filler clauses."
+        )
+
+    if issues.get("widow_lines"):
+        actions.append(
+            "WIDOW_LINES: Some 2-line bullets have very few words on line 2 (looks like a stub).\n"
+            "  Fix each: EITHER shorten to ≤18 words (1 clean line, preferred)\n"
+            "  OR extend to 28-30 words so both lines look full.\n"
+            "  Do NOT write 19-27 words. Only add specifics already in this role."
+        )
+
+    if issues.get("summary_short"):
+        actions.append(
+            "SUMMARY_SHORT: Summary is less than 3 lines. Expand to 3-4 lines (3 sentences):\n"
+            "  1. Title + years + core domain (from existing experience)\n"
+            "  2. 1-2 hard metrics already in the resume\n"
+            "  3. Key technologies from the Skills section\n"
+            "  No buzzwords. Only use facts already in the resume."
+        )
+
+    if issues.get("summary_long"):
+        actions.append(
+            "SUMMARY_LONG: Summary exceeds 4 lines. Cut to exactly 3-4 lines:\n"
+            "  Keep the strongest metric and most relevant tech. Remove filler."
+        )
+
+    if issues.get("gap") and not issues.get("overflow"):
+        actions.append(
+            "GAP: Visible empty space at the bottom. Fill with real content:\n"
+            "  - Extend 2-4 existing bullets: add the specific tool, metric, or outcome already implied.\n"
+            "  - If still not enough, add 1 bullet to the most recent role using facts from that role.\n"
+            "  - Every added word must come from existing resume content — no fabrication."
+        )
+
+    if not actions:
+        return ""
+
+    actions_text = "\n\n".join(f"{i + 1}. {a}" for i, a in enumerate(actions))
+    return (
+        f"Fix these visual issues found in the rendered resume (priority order):\n\n"
+        f"{actions_text}\n\n"
+        f"GLOBAL RULES:\n"
+        f"- Bullet word counts: ≤18 (1 line) OR 28-30 (2 full lines). NEVER 19-27 words.\n"
+        f"- If a bullet wraps to 2 lines, line 2 must have ≥10 words.\n"
+        f"- STRICT anti-hallucination: only use information already in this .tex file.\n"
+        f"  Do NOT invent new projects, tools, metrics, companies, degrees, or certifications.\n"
+        f"- No \\vspace, no blank lines.\n"
+        f"- Final result must be exactly 1 page.\n\n"
+        f"Return ONLY the complete corrected .tex file.\n\n"
+        f"=== CURRENT .TEX ===\n{tex}"
+    )
+
+
 def _build_fix_summary_prompt(tex: str, current_lines: int) -> str:
     """Fix summary to exactly 3-4 rendered lines."""
     if current_lines < 3:
@@ -826,6 +964,69 @@ def tailor_resume(
 
         if not _gate_changed:
             break  # nothing changed -- either all good or unfixable
+
+    # ── Gemini final visual quality check ─────────────────────────────────────
+    # Gemini inspects the rendered PDF for remaining visual issues.
+    # Claude Haiku applies fixes; ATS is re-scored after each round and reverted
+    # if the score drops > 3%. Max 2 rounds to prevent infinite correction loops.
+    for _gcheck in range(2):
+        gcheck_img = render_preview(pdf_path)
+        if gcheck_img is None:
+            logger.warning("Job #%d: Gemini checker -- render failed, skipping", job_id)
+            break
+
+        issues = _gemini_inspect_resume(gcheck_img)
+        if not issues:
+            logger.info("Job #%d: Gemini inspect returned nothing -- skipping", job_id)
+            break
+
+        if not any(issues.values()):
+            logger.info("Job #%d: Gemini final check PASSED (round %d)", job_id, _gcheck + 1)
+            break
+
+        logger.warning("Job #%d: Gemini final check issues (round %d): %s", job_id, _gcheck + 1, issues)
+
+        fix_prompt = _build_gemini_fix_prompt(tex_content, issues, jd_text)
+        if not fix_prompt:
+            logger.info("Job #%d: Gemini checker -- no actionable fixes, stopping", job_id)
+            break
+
+        fixed_tex = _extract_tex(_call_claude(fix_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
+        fixed_tex = sanitise_latex(fixed_tex)
+        ok, fixed_pdf, err = compile_tex(fixed_tex, RESUMES_DIR, pdf_filename)
+
+        if not ok:
+            for _fix in range(2):
+                fixed_tex = _extract_tex(_call_claude(_build_fix_compile_prompt(fixed_tex, err), client, model=_HAIKU_MODEL, max_tokens=4000))
+                fixed_tex = sanitise_latex(fixed_tex)
+                ok, fixed_pdf, err = compile_tex(fixed_tex, RESUMES_DIR, pdf_filename)
+                if ok:
+                    break
+
+        if not ok or get_page_count(fixed_pdf) != 1:
+            logger.warning(
+                "Job #%d: Gemini fix compile failed or overflowed -- skipping round %d",
+                job_id, _gcheck + 1,
+            )
+            break
+
+        # ATS guard: re-score and revert if score drops > 3%
+        new_ats = score_resume(fixed_pdf, jd_text, client, keywords=jd_keywords)
+        if new_ats < ats_score - 3.0:
+            logger.warning(
+                "Job #%d: Gemini fix dropped ATS %.1f%% -> %.1f%% (>3%% drop) -- reverting",
+                job_id, ats_score, new_ats,
+            )
+            break
+
+        prev_ats = ats_score
+        tex_content = fixed_tex
+        pdf_path = fixed_pdf
+        ats_score = new_ats
+        logger.info(
+            "Job #%d: Gemini fix accepted (round %d) -- ATS %.1f%% -> %.1f%%",
+            job_id, _gcheck + 1, prev_ats, ats_score,
+        )
 
     # Step 5: Generate cover letter
     cover_letter = _generate_cover_letter(job_dict, jd_text, client)
