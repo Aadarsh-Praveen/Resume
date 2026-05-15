@@ -105,17 +105,27 @@ def _build_tailoring_prompt(jd_text: str, include_certs: bool = False) -> str:
         f"- Reframe existing bullets to use JD keywords — never fabricate new experience.\n"
         f"- CERTIFICATIONS: {cert_instruction}\n"
         f"- PUBLICATIONS: DO NOT include a Publications section.\n\n"
+        f"BULLET RULES (critical for page fill):\n"
+        f"- ALL bullets MUST be exactly 28-30 words (2 full lines). NO EXCEPTIONS.\n"
+        f"- NEVER write a 1-line bullet (≤18 words) — short bullets leave visible page gaps.\n"
+        f"- NEVER write 19-27 words — creates an ugly dangling stub on line 2.\n"
+        f"- Line 2 of every bullet must have ≥10 words.\n"
+        f"- Start each bullet with a strong past-tense action verb.\n\n"
+        f"STRUCTURE RULES (exact counts required):\n"
+        f"- Most recent work role: EXACTLY 4 bullets.\n"
+        f"- Each other work role: EXACTLY 3 bullets.\n"
+        f"- Each project: EXACTLY 3 bullets.\n"
+        f"- Summary: EXACTLY 3-4 lines (3 sentences). Structure:\n"
+        f"    1. Job title + years of experience + core domain\n"
+        f"    2. 1-2 specific metrics already present in the resume\n"
+        f"    3. Key technologies from the Skills section\n"
+        f"  No buzzwords: 'passionate', 'dynamic', 'innovative', 'seasoned', 'PhD-track'.\n"
+        f"- Skills: exactly 4 categories × 6-7 tools each.\n\n"
         f"LAYOUT RULES:\n"
-        f"- PAGE FILL: The resume MUST fill 90-95% of the page. Use enough bullets to achieve this.\n"
-        f"  Most recent role: 4-5 bullets. Other roles: 3-4 bullets each. Projects: 3 bullets each.\n"
-        f"  NEVER leave more than 5% empty space at the bottom.\n"
-        f"- Summary: exactly 3-4 lines (3 sentences). Never 5+.\n"
-        f"- Bullets: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
-        f"  19-27 word bullets leave a short dangling 2nd line — looks unprofessional.\n"
-        f"- If a bullet wraps to 2 lines, line 2 must have >= 10 words.\n"
-        f"- Skills: 4 categories x 6-7 tools each.\n"
-        f"- No \\vspace, no blank lines, no Certifications, no Publications.\n\n"
-        f"Return ONLY the complete tailored .tex file -- no explanations."
+        f"- No \\vspace, no blank lines between bullets, no extra spacing.\n"
+        f"- No Certifications section, no Publications section.\n"
+        f"- Company line format: CompanyName \\hfill City, ST — no pipes, no extra labels.\n\n"
+        f"Return ONLY the complete tailored .tex file -- no explanations, no markdown fences."
     )
 
 
@@ -700,69 +710,56 @@ def tailor_resume(
         if not success:
             raise RuntimeError(f"Job #{job_id}: compile failed after trim: {error_log}")
 
-    # Step 3b: Visual verify loop -- up to 3 attempts
-    # SHORT: Claude content expansion only (margins stay at 0.25in max)
-    # OVERFLOW: content trim first, then margin shrink down to 0.20in
-    for visual_attempt in range(3):
-        is_good, verdict = _claude_verify_page(pdf_path, client)
-        if is_good:
-            logger.info("Page verify: FULL -- approved (attempt %d)", visual_attempt + 1)
-            break
+    _A4_H_IN = 11.69
+    _LINE_H_IN = 0.2  # ~11pt with 1.2 leading
 
+    # Step 3b: Visual verify -- single pass (fill-or-trim, no oscillation loop)
+    # The tailoring prompt mandates all 28-30 word bullets, so gaps should be rare.
+    # If a gap is detected, fill once using content. If overflow, trim once.
+    is_good, verdict = _claude_verify_page(pdf_path, client)
+    if not is_good:
         if verdict == "SHORT":
-            # Measure actual gap to calibrate how aggressive to expand
             gap_img = render_preview(pdf_path)
-            gap = measure_page_gap(gap_img) if gap_img is not None else 0.15
-            # Each attempt gets more aggressive: lower effective fill_pct forces bigger expansion
-            effective_fill = max(int((1.0 - gap) * 100) - (visual_attempt * 15), 55)
+            gap = measure_page_gap(gap_img) if gap_img is not None else 0.10
+            gap_lines = max(1, int(gap * _A4_H_IN / _LINE_H_IN))
             logger.warning(
-                "Job #%d: SHORT on attempt %d (gap %.1f%%, effective fill %d%%) -- expanding",
-                job_id, visual_attempt + 1, gap * 100, effective_fill,
+                "Job #%d: SHORT (gap %.1f%%, ~%d lines) -- filling with targeted bullets",
+                job_id, gap * 100, gap_lines,
             )
-            expand_prompt = _build_expand_prompt(tex_content, effective_fill)
-            expanded_tex = _extract_tex(_call_claude(expand_prompt, client, model=_HAIKU_MODEL, max_tokens=4000))
-            expanded_tex = sanitise_latex(expanded_tex)
-            ok, expanded_pdf, error_log = compile_tex(expanded_tex, RESUMES_DIR, pdf_filename)
+            fill_tex = _extract_tex(
+                _call_claude(_build_fill_gap_prompt(tex_content, gap_lines, jd_text[:600]), client, model=_HAIKU_MODEL, max_tokens=4000)
+            )
+            fill_tex = sanitise_latex(fill_tex)
+            ok, fill_pdf, error_log = compile_tex(fill_tex, RESUMES_DIR, pdf_filename)
             if not ok:
-                # Expansion produced broken LaTeX (often truncation) -- try to fix it
-                logger.warning("Job #%d: expand compile failed on attempt %d -- trying auto-fix", job_id, visual_attempt + 1)
                 for _fix in range(2):
-                    fixed_tex = _extract_tex(_call_claude(_build_fix_compile_prompt(expanded_tex, error_log), client, model=_HAIKU_MODEL, max_tokens=4000))
-                    fixed_tex = sanitise_latex(fixed_tex)
-                    ok, expanded_pdf, error_log = compile_tex(fixed_tex, RESUMES_DIR, pdf_filename)
+                    fill_tex = _extract_tex(_call_claude(_build_fix_compile_prompt(fill_tex, error_log), client, model=_HAIKU_MODEL, max_tokens=4000))
+                    fill_tex = sanitise_latex(fill_tex)
+                    ok, fill_pdf, error_log = compile_tex(fill_tex, RESUMES_DIR, pdf_filename)
                     if ok:
-                        expanded_tex = fixed_tex
                         break
-                if not ok:
-                    logger.warning("Job #%d: expand auto-fix also failed on attempt %d -- keeping current", job_id, visual_attempt + 1)
-                    break
-            new_pages = get_page_count(expanded_pdf)
-            if new_pages == 1:
-                tex_content = expanded_tex
-                pdf_path = expanded_pdf
-            elif new_pages > 1:
-                # Expand overshot -- trim back to 1 page then stop expanding
-                logger.warning("Job #%d: expand overflowed to %d pages -- trimming to recover", job_id, new_pages)
+            if ok and get_page_count(fill_pdf) == 1:
+                tex_content = fill_tex
+                pdf_path = fill_pdf
+                logger.info("Visual verify fill: gap %.1f%% filled", gap * 100)
+            elif ok and get_page_count(fill_pdf) > 1:
+                # Fill overflowed -- trim back
+                logger.warning("Job #%d: fill overflowed to %d pages -- trimming to recover", job_id, get_page_count(fill_pdf))
                 recover_tex = _extract_tex(
-                    _call_claude(_build_trim_prompt(expanded_tex, new_pages), client, model=_HAIKU_MODEL, max_tokens=4000)
+                    _call_claude(_build_trim_prompt(fill_tex, get_page_count(fill_pdf)), client, model=_HAIKU_MODEL, max_tokens=4000)
                 )
                 recover_tex = sanitise_latex(recover_tex)
                 recover_tex = adjust_margin(recover_tex, 0.25)
-                ok, recovered_pdf, _ = compile_tex(recover_tex, RESUMES_DIR, pdf_filename)
-                if ok and get_page_count(recovered_pdf) == 1:
+                ok2, recovered_pdf, _ = compile_tex(recover_tex, RESUMES_DIR, pdf_filename)
+                if ok2 and get_page_count(recovered_pdf) == 1:
                     tex_content = recover_tex
                     pdf_path = recovered_pdf
-                    logger.info("Post-expand trim recovered 1-page layout")
-                else:
-                    logger.warning("Post-expand trim failed -- keeping pre-expand PDF")
-                break  # stop expanding after an overflow recovery
-            # continue loop to re-verify
+                    logger.info("Post-fill trim recovered 1-page layout")
+            else:
+                logger.warning("Job #%d: fill compile failed -- keeping current", job_id)
 
         elif verdict == "OVERFLOW":
-            logger.warning(
-                "Job #%d: OVERFLOW on attempt %d -- trimming content",
-                job_id, visual_attempt + 1,
-            )
+            logger.warning("Job #%d: OVERFLOW after compile gate -- trimming content", job_id)
             pages_actual = get_page_count(pdf_path)
             trim_pages = pages_actual if pages_actual > 1 else 2
             trim_tex = _extract_tex(
@@ -776,7 +773,6 @@ def tailor_resume(
                 pdf_path = trimmed_pdf
                 logger.info("Content trim fixed OVERFLOW")
             elif ok:
-                # Content trim not enough -- shrink margins as last resort (0.23 -> 0.21 -> 0.20)
                 for margin in [0.23, 0.21, 0.20]:
                     shrink_tex = adjust_margin(trim_tex, margin)
                     ok2, shrink_pdf, _ = compile_tex(shrink_tex, RESUMES_DIR, pdf_filename)
@@ -787,20 +783,10 @@ def tailor_resume(
                         break
                 else:
                     logger.warning("Job #%d: could not fit on 1 page -- flagging", job_id)
-            # continue loop to re-verify
+    else:
+        logger.info("Visual verify: FULL -- approved")
 
-        else:
-            break
-
-    # Pixel safety net — content-first gap elimination.
-    # A recruiter sees empty space and thinks the candidate has nothing more to say.
-    # Strategy: add real content first; only adjust margin as a last resort.
-    #   gap <= 4%  : looks fine, skip
-    #   gap 4-12%  : add 1-2 targeted bullets (content-first)
-    #   gap > 12%  : expand broadly, then add bullets for any residual gap
-    #   fallback   : bottom margin absorption if content changes fail
-    _A4_H_IN = 11.69
-    _LINE_H_IN = 0.2  # ~11pt with 1.2 leading
+    # Pixel safety net — content-first gap elimination (last resort after visual verify pass).
     safety_img = render_preview(pdf_path)
     if safety_img is not None:
         safety_gap = measure_page_gap(safety_img)
