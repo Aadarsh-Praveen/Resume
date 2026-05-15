@@ -106,6 +106,9 @@ def _build_tailoring_prompt(jd_text: str, include_certs: bool = False) -> str:
         f"- CERTIFICATIONS: {cert_instruction}\n"
         f"- PUBLICATIONS: DO NOT include a Publications section.\n\n"
         f"LAYOUT RULES:\n"
+        f"- PAGE FILL: The resume MUST fill 90-95% of the page. Use enough bullets to achieve this.\n"
+        f"  Most recent role: 4-5 bullets. Other roles: 3-4 bullets each. Projects: 3 bullets each.\n"
+        f"  NEVER leave more than 5% empty space at the bottom.\n"
         f"- Summary: exactly 3-4 lines (3 sentences). Never 5+.\n"
         f"- Bullets: ≤18 words (1 line) OR 28-30 words (2 full lines). NEVER 19-27 words.\n"
         f"  19-27 word bullets leave a short dangling 2nd line — looks unprofessional.\n"
@@ -127,23 +130,23 @@ def _build_fix_compile_prompt(broken_tex: str, error_log: str) -> str:
 
 def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
     needed = 100 - fill_pct
-    if needed >= 25:
+    if needed >= 20:
         guidance = (
-            "Add 1 bullet to each work experience role (most recent -> 4 bullets, others -> 3 each). "
-            "Each new bullet must state a specific outcome with a number."
+            "Add 2 bullets to the most recent role (reach 5 bullets) and 1 bullet to each other role. "
+            "Each new bullet must state a specific outcome with a number or tool name."
         )
-    elif needed >= 12:
+    elif needed >= 10:
         guidance = (
-            "Add 1 bullet to the most recent role only (4 bullets total). "
-            "Extend 2-3 existing bullets by adding a specific metric or tool."
+            "Add 1 bullet to each work experience role (most recent -> 4-5 bullets, others -> 3-4 each). "
+            "Each new bullet must state a concrete result already implied by the role."
         )
     else:
         guidance = (
-            "Extend 3-4 existing bullets: add a concrete result, a percentage, or a tool name. "
-            "Do NOT add new bullets -- deepen what's already there."
+            "Extend 4-5 existing bullets: add a concrete result, a percentage, scale number, or tool name. "
+            "Prefer extending short 1-line bullets into full 28-30 word 2-line bullets."
         )
     return (
-        f"This resume is only ~{fill_pct}% full. Expand it to fill the page.\n\n"
+        f"This resume is only ~{fill_pct}% full. It MUST reach 92-95% page fill.\n\n"
         f"{guidance}\n\n"
         f"CRITICAL — no hallucination: only add facts already present elsewhere in this .tex file.\n"
         f"Do NOT invent new projects, tools, metrics, companies, or degrees.\n"
@@ -154,7 +157,7 @@ def _build_expand_prompt(sparse_tex: str, fill_pct: int) -> str:
         f"- If 2 lines: line 2 must have >= 10 words.\n"
         f"- Summary: exactly 3-4 lines. Not 5.\n"
         f"- No Certifications, Publications, blank lines, or \\vspace.\n\n"
-        f"Target: ~95% page fill. Stop before 2 pages.\n"
+        f"Target: 92-95% page fill. Stop before 2 pages.\n"
         f"Return ONLY the complete .tex file.\n\n"
         f"=== CURRENT .TEX ===\n{sparse_tex}"
     )
@@ -214,25 +217,36 @@ def _build_fill_gap_prompt(tex: str, gap_lines: int, jd_snippet: str) -> str:
     """Expand existing bullets to fill bottom whitespace — no new invented content."""
     if gap_lines <= 2:
         instruction = (
-            "Extend 2-3 existing bullets in the most recent work experience: "
-            "add the specific tool, metric, or outcome that the bullet already implies but doesn't state. "
-            "Do NOT add new bullet points."
+            "Extend 3-4 existing short bullets (1-line bullets) into full 28-30 word 2-line bullets: "
+            "add the specific tool, metric, or outcome that the bullet already implies. "
+            "Prefer bullets in the most recent role."
         )
-    elif gap_lines <= 4:
+    elif gap_lines <= 5:
         instruction = (
-            "Extend 3-4 existing bullets across the work experience sections: "
-            "add concrete numbers, tool names, or scale already implied by each bullet. "
-            "If extending is not enough, add ONE new bullet to the most recent role "
-            "using only facts stated elsewhere in this same role."
+            "Do BOTH of the following:\n"
+            "1. Add 1 new bullet to the most recent work experience role using facts already in that role.\n"
+            "2. Extend 3-4 existing 1-line bullets into 28-30 word 2-line bullets across all roles.\n"
+            "This should fill approximately 4-5 lines of space."
+        )
+    elif gap_lines <= 9:
+        instruction = (
+            "Do ALL of the following:\n"
+            "1. Add 1 new bullet to the most recent role AND 1 new bullet to the second role.\n"
+            "2. Extend 3-4 existing 1-line bullets into 28-30 word 2-line bullets.\n"
+            "3. Extend 1-2 project bullets into 28-30 word 2-line bullets.\n"
+            "Use only facts already stated in the respective role/project."
         )
     else:
         instruction = (
-            "Extend 4-6 existing bullets across work experience and projects: "
-            "each extension must add a specific number, tool, or scope already present in the role. "
-            "Add at most 1 new bullet per section, only using facts from the existing role content."
+            "The resume has a large gap. Do ALL of the following aggressively:\n"
+            "1. Add 2 new bullets to the most recent role.\n"
+            "2. Add 1 new bullet to each other work experience role.\n"
+            "3. Extend ALL existing 1-line bullets into 28-30 word 2-line bullets where possible.\n"
+            "4. Add 1 bullet to each project section.\n"
+            "Use only facts already present in the respective role/project content."
         )
     return (
-        f"This resume has ~{gap_lines} line(s) of empty space at the bottom. Fill it.\n\n"
+        f"This resume has ~{gap_lines} empty line(s) at the bottom — it must fill 92-95% of the page.\n\n"
         f"{instruction}\n\n"
         f"STRICT anti-hallucination rule:\n"
         f"- Every word you add must be directly derivable from the existing .tex content.\n"
@@ -455,7 +469,7 @@ def _claude_verify_page(pdf_path: str, client: anthropic.Anthropic) -> tuple[boo
         logger.info("_claude_verify_page: obvious gap %.1f%% -- SHORT (skip Gemini)", gap * 100)
         return False, "SHORT"
 
-    if gap < 0.04:
+    if gap < 0.02:
         logger.info("_claude_verify_page: gap %.1f%% within bottom margin -- FULL (skip Gemini)", gap * 100)
         return True, "FULL"
 
@@ -700,7 +714,7 @@ def tailor_resume(
             gap_img = render_preview(pdf_path)
             gap = measure_page_gap(gap_img) if gap_img is not None else 0.15
             # Each attempt gets more aggressive: lower effective fill_pct forces bigger expansion
-            effective_fill = max(int((1.0 - gap) * 100) - (visual_attempt * 10), 60)
+            effective_fill = max(int((1.0 - gap) * 100) - (visual_attempt * 15), 55)
             logger.warning(
                 "Job #%d: SHORT on attempt %d (gap %.1f%%, effective fill %d%%) -- expanding",
                 job_id, visual_attempt + 1, gap * 100, effective_fill,
@@ -790,7 +804,7 @@ def tailor_resume(
     safety_img = render_preview(pdf_path)
     if safety_img is not None:
         safety_gap = measure_page_gap(safety_img)
-        if safety_gap > 0.04:
+        if safety_gap > 0.02:
             gap_lines = max(1, int(safety_gap * _A4_H_IN / _LINE_H_IN))
             logger.warning(
                 "Job #%d: safety net gap %.1f%% (~%d lines) -- filling with content",
@@ -831,8 +845,8 @@ def tailor_resume(
                             tex_content = pl_tex
                             pdf_path = pl_pdf
 
-            # If gap remains > 4% after content fill, absorb remainder with bottom margin
-            if safety_gap > 0.04:
+            # If gap remains > 2% after content fill, absorb remainder with bottom margin
+            if safety_gap > 0.02:
                 rem_bottom = min(round(safety_gap * _A4_H_IN, 3), 0.75)
                 adj_tex = adjust_bottom_margin(tex_content, rem_bottom)
                 ok2, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
@@ -950,7 +964,7 @@ def tailor_resume(
         gate_img = render_preview(pdf_path)
         if gate_img is not None:
             gate_gap = measure_page_gap(gate_img)
-            if gate_gap > 0.04:
+            if gate_gap > 0.02:
                 gate_bottom = min(round(gate_gap * _A4_H_IN, 3), 0.75)
                 adj_tex = adjust_bottom_margin(tex_content, gate_bottom)
                 ok, adj_pdf, _ = compile_tex(adj_tex, RESUMES_DIR, pdf_filename)
